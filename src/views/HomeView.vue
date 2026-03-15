@@ -12,13 +12,15 @@ async function handleLogout() {
 </script>
 
 <template>
-  <div>
-    <h1>You did it!</h1>
-    <p>
+  <v-container>
+    <h1 class="text-h4 mb-4">You did it!</h1>
+    <p class="text-body-1 mb-2">
       Visit <a href="https://vuejs.org/" target="_blank" rel="noopener">vuejs.org</a> to read the
       documentation
     </p>
-    <p>Signed in as {{ authStore.user?.email || authStore.user?.displayName }}</p>
-    <button @click="handleLogout">Sign Out</button>
-  </div>
+    <p class="text-body-1 mb-4">
+      Signed in as {{ authStore.user?.email || authStore.user?.displayName }}
+    </p>
+    <v-btn color="primary" variant="outlined" @click="handleLogout">Sign Out</v-btn>
+  </v-container>
 </template>
