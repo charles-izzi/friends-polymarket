@@ -14,26 +14,26 @@ function generateInviteCode(): string {
   return crypto.randomBytes(4).toString('hex')
 }
 
-export const createServer = onCall(async (request) => {
+export const createMarket = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
   const { name } = request.data as { name: string }
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
-    throw new HttpsError('invalid-argument', 'Server name is required')
+    throw new HttpsError('invalid-argument', 'Market name is required')
   }
 
-  // Check user isn't already in a server
+  // Check user isn't already in a market
   const existing = await db.collectionGroup('members').where('userId', '==', uid).limit(1).get()
   if (!existing.empty) {
-    throw new HttpsError('already-exists', 'You are already in a server')
+    throw new HttpsError('already-exists', 'You are already in a market')
   }
 
   const inviteCode = generateInviteCode()
-  const serverRef = db.collection('servers').doc()
+  const marketRef = db.collection('markets').doc()
 
   const batch = db.batch()
-  batch.set(serverRef, {
+  batch.set(marketRef, {
     name: name.trim(),
     ownerId: uid,
     inviteCode,
@@ -41,7 +41,7 @@ export const createServer = onCall(async (request) => {
     liquidityParam: 100,
     createdAt: FieldValue.serverTimestamp(),
   })
-  batch.set(serverRef.collection('members').doc(uid), {
+  batch.set(marketRef.collection('members').doc(uid), {
     userId: uid,
     displayName: request.auth?.token.name || request.auth?.token.email || 'Anonymous',
     photoURL: request.auth?.token.picture || null,
@@ -50,10 +50,10 @@ export const createServer = onCall(async (request) => {
   })
 
   await batch.commit()
-  return { serverId: serverRef.id, inviteCode }
+  return { marketId: marketRef.id, inviteCode }
 })
 
-export const joinServer = onCall(async (request) => {
+export const joinMarket = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
@@ -62,45 +62,45 @@ export const joinServer = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'Invite code is required')
   }
 
-  // Check user isn't already in a server
+  // Check user isn't already in a market
   const existing = await db.collectionGroup('members').where('userId', '==', uid).limit(1).get()
   if (!existing.empty) {
-    throw new HttpsError('already-exists', 'You are already in a server')
+    throw new HttpsError('already-exists', 'You are already in a market')
   }
 
-  // Find server by invite code
-  const serversSnap = await db
-    .collection('servers')
+  // Find market by invite code
+  const marketsSnap = await db
+    .collection('markets')
     .where('inviteCode', '==', inviteCode.trim())
     .limit(1)
     .get()
-  if (serversSnap.empty) {
+  if (marketsSnap.empty) {
     throw new HttpsError('not-found', 'Invalid invite code')
   }
 
-  const serverDoc = serversSnap.docs[0]
-  const serverData = serverDoc.data()
+  const marketDoc = marketsSnap.docs[0]
+  const marketData = marketDoc.data()
 
-  await serverDoc.ref
+  await marketDoc.ref
     .collection('members')
     .doc(uid)
     .set({
       userId: uid,
       displayName: request.auth?.token.name || request.auth?.token.email || 'Anonymous',
       photoURL: request.auth?.token.picture || null,
-      balance: serverData.defaultBalance,
+      balance: marketData.defaultBalance,
       joinedAt: FieldValue.serverTimestamp(),
     })
 
-  return { serverId: serverDoc.id }
+  return { marketId: marketDoc.id }
 })
 
-export const createMarket = onCall(async (request) => {
+export const createBet = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { serverId, question, type, outcomes, excludedMembers, closesAt } = request.data as {
-    serverId: string
+  const { marketId, question, type, outcomes, excludedMembers, closesAt } = request.data as {
+    marketId: string
     question: string
     type: 'binary' | 'multiple_choice'
     outcomes: string[]
@@ -109,8 +109,8 @@ export const createMarket = onCall(async (request) => {
   }
 
   // Validate inputs
-  if (!serverId || !question?.trim()) {
-    throw new HttpsError('invalid-argument', 'Server ID and question are required')
+  if (!marketId || !question?.trim()) {
+    throw new HttpsError('invalid-argument', 'Market ID and question are required')
   }
   if (type !== 'binary' && type !== 'multiple_choice') {
     throw new HttpsError('invalid-argument', 'Type must be binary or multiple_choice')
@@ -126,15 +126,15 @@ export const createMarket = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'Close date must be in the future')
   }
 
-  // Verify user is a member of the server
+  // Verify user is a member of the market
   const memberDoc = await db
-    .collection('servers')
-    .doc(serverId)
+    .collection('markets')
+    .doc(marketId)
     .collection('members')
     .doc(uid)
     .get()
   if (!memberDoc.exists) {
-    throw new HttpsError('permission-denied', 'You are not a member of this server')
+    throw new HttpsError('permission-denied', 'You are not a member of this market')
   }
 
   // Verify excluded members are actual members (if any)
@@ -142,16 +142,16 @@ export const createMarket = onCall(async (request) => {
     (id) => typeof id === 'string' && id.length > 0,
   )
 
-  // Get server liquidity param
-  const serverDoc = await db.collection('servers').doc(serverId).get()
-  if (!serverDoc.exists) {
-    throw new HttpsError('not-found', 'Server not found')
+  // Get market liquidity param
+  const marketDoc = await db.collection('markets').doc(marketId).get()
+  if (!marketDoc.exists) {
+    throw new HttpsError('not-found', 'Market not found')
   }
-  const liquidityParam = serverDoc.data()!.liquidityParam || 100
+  const liquidityParam = marketDoc.data()!.liquidityParam || 100
 
-  const marketRef = db.collection('servers').doc(serverId).collection('markets').doc()
+  const betRef = db.collection('markets').doc(marketId).collection('bets').doc()
 
-  await marketRef.set({
+  await betRef.set({
     question: question.trim(),
     type,
     outcomes: outcomes.map((o) => o.trim()),
@@ -165,74 +165,74 @@ export const createMarket = onCall(async (request) => {
     sharesSold: new Array(outcomes.length).fill(0),
   })
 
-  return { marketId: marketRef.id }
+  return { betId: betRef.id }
 })
 
 export const executeTrade = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { serverId, marketId, outcomeIndex, shares } = request.data as {
-    serverId: string
+  const { marketId, betId, outcomeIndex, shares } = request.data as {
     marketId: string
+    betId: string
     outcomeIndex: number
     shares: number // positive = buy, negative = sell
   }
 
-  if (!serverId || !marketId) {
-    throw new HttpsError('invalid-argument', 'Server ID and market ID are required')
+  if (!marketId || !betId) {
+    throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')
   }
   if (typeof outcomeIndex !== 'number' || typeof shares !== 'number' || shares === 0) {
     throw new HttpsError('invalid-argument', 'Valid outcome index and non-zero shares required')
   }
 
-  const serverRef = db.collection('servers').doc(serverId)
-  const marketRef = serverRef.collection('markets').doc(marketId)
-  const memberRef = serverRef.collection('members').doc(uid)
-  const positionRef = marketRef.collection('positions').doc(uid)
+  const marketRef = db.collection('markets').doc(marketId)
+  const betRef = marketRef.collection('bets').doc(betId)
+  const memberRef = marketRef.collection('members').doc(uid)
+  const positionRef = betRef.collection('positions').doc(uid)
 
   const result = await db.runTransaction(async (txn) => {
-    const [marketSnap, memberSnap, positionSnap] = await Promise.all([
-      txn.get(marketRef),
+    const [betSnap, memberSnap, positionSnap] = await Promise.all([
+      txn.get(betRef),
       txn.get(memberRef),
       txn.get(positionRef),
     ])
 
-    if (!marketSnap.exists) {
-      throw new HttpsError('not-found', 'Market not found')
+    if (!betSnap.exists) {
+      throw new HttpsError('not-found', 'Bet not found')
     }
     if (!memberSnap.exists) {
-      throw new HttpsError('permission-denied', 'You are not a member of this server')
+      throw new HttpsError('permission-denied', 'You are not a member of this market')
     }
 
-    const market = marketSnap.data()!
+    const bet = betSnap.data()!
     const member = memberSnap.data()!
 
-    // Validate market is open and not past close time
-    if (market.status !== 'open') {
-      throw new HttpsError('failed-precondition', 'Market is not open for trading')
+    // Validate bet is open and not past close time
+    if (bet.status !== 'open') {
+      throw new HttpsError('failed-precondition', 'Bet is not open for trading')
     }
-    if (market.closesAt.toDate().getTime() <= Date.now()) {
-      throw new HttpsError('failed-precondition', 'Market has closed')
+    if (bet.closesAt.toDate().getTime() <= Date.now()) {
+      throw new HttpsError('failed-precondition', 'Bet has closed')
     }
 
     // Check user is not excluded
-    if (market.excludedMembers && market.excludedMembers.includes(uid)) {
-      throw new HttpsError('permission-denied', 'You are excluded from this market')
+    if (bet.excludedMembers && bet.excludedMembers.includes(uid)) {
+      throw new HttpsError('permission-denied', 'You are excluded from this bet')
     }
 
     // Validate outcome index
-    if (outcomeIndex < 0 || outcomeIndex >= market.outcomes.length) {
+    if (outcomeIndex < 0 || outcomeIndex >= bet.outcomes.length) {
       throw new HttpsError('invalid-argument', 'Invalid outcome index')
     }
 
-    const sharesSold: number[] = market.sharesSold
-    const b: number = market.liquidityParam
+    const sharesSold: number[] = bet.sharesSold
+    const b: number = bet.liquidityParam
 
     // Get current position
     const position = positionSnap.exists
       ? positionSnap.data()!
-      : { shares: new Array(market.outcomes.length).fill(0), totalCost: 0 }
+      : { shares: new Array(bet.outcomes.length).fill(0), totalCost: 0 }
 
     // For sells, verify user has enough shares
     if (shares < 0) {
@@ -256,10 +256,10 @@ export const executeTrade = onCall(async (request) => {
       )
     }
 
-    // Update market sharesSold
+    // Update bet sharesSold
     const newSharesSold = [...sharesSold]
     newSharesSold[outcomeIndex] = (newSharesSold[outcomeIndex] ?? 0) + shares
-    txn.update(marketRef, { sharesSold: newSharesSold })
+    txn.update(betRef, { sharesSold: newSharesSold })
 
     // Update member balance
     txn.update(memberRef, { balance: member.balance - cost })
@@ -275,7 +275,7 @@ export const executeTrade = onCall(async (request) => {
 
     // Record trade
     const priceAfter = calcPrices(newSharesSold, b)
-    const tradeRef = marketRef.collection('trades').doc()
+    const tradeRef = betRef.collection('trades').doc()
     txn.set(tradeRef, {
       userId: uid,
       outcomeIndex,
@@ -296,46 +296,46 @@ export const executeTrade = onCall(async (request) => {
   return result
 })
 
-export const resolveMarket = onCall(async (request) => {
+export const resolveBet = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { serverId, marketId, outcomeIndex } = request.data as {
-    serverId: string
+  const { marketId, betId, outcomeIndex } = request.data as {
     marketId: string
+    betId: string
     outcomeIndex: number
   }
 
-  if (!serverId || !marketId || typeof outcomeIndex !== 'number') {
-    throw new HttpsError('invalid-argument', 'Server ID, market ID, and outcome index are required')
+  if (!marketId || !betId || typeof outcomeIndex !== 'number') {
+    throw new HttpsError('invalid-argument', 'Market ID, bet ID, and outcome index are required')
   }
 
-  const serverRef = db.collection('servers').doc(serverId)
-  const marketRef = serverRef.collection('markets').doc(marketId)
+  const marketRef = db.collection('markets').doc(marketId)
+  const betRef = marketRef.collection('bets').doc(betId)
 
   await db.runTransaction(async (txn) => {
-    const marketSnap = await txn.get(marketRef)
-    if (!marketSnap.exists) {
-      throw new HttpsError('not-found', 'Market not found')
+    const betSnap = await txn.get(betRef)
+    if (!betSnap.exists) {
+      throw new HttpsError('not-found', 'Bet not found')
     }
 
-    const market = marketSnap.data()!
+    const bet = betSnap.data()!
 
     // Only the creator can resolve
-    if (market.createdBy !== uid) {
-      throw new HttpsError('permission-denied', 'Only the bet creator can resolve this market')
+    if (bet.createdBy !== uid) {
+      throw new HttpsError('permission-denied', 'Only the bet creator can resolve this bet')
     }
 
-    if (market.status !== 'open' && market.status !== 'closed') {
-      throw new HttpsError('failed-precondition', 'Market is already resolved or cancelled')
+    if (bet.status !== 'open' && bet.status !== 'closed') {
+      throw new HttpsError('failed-precondition', 'Bet is already resolved or cancelled')
     }
 
-    if (outcomeIndex < 0 || outcomeIndex >= market.outcomes.length) {
+    if (outcomeIndex < 0 || outcomeIndex >= bet.outcomes.length) {
       throw new HttpsError('invalid-argument', 'Invalid outcome index')
     }
 
     // All reads must happen before any writes in a Firestore transaction
-    const positionsSnap = await txn.get(marketRef.collection('positions'))
+    const positionsSnap = await txn.get(betRef.collection('positions'))
 
     // Read all member docs for winners
     const winnerUpdates: {
@@ -347,7 +347,7 @@ export const resolveMarket = onCall(async (request) => {
       const pos = posDoc.data()
       const winningShares: number = pos.shares[outcomeIndex] ?? 0
       if (winningShares > 0) {
-        const memberRef = serverRef.collection('members').doc(posDoc.id)
+        const memberRef = marketRef.collection('members').doc(posDoc.id)
         const memberSnap = await txn.get(memberRef)
         if (memberSnap.exists) {
           winnerUpdates.push({
@@ -360,7 +360,7 @@ export const resolveMarket = onCall(async (request) => {
     }
 
     // Now perform all writes
-    txn.update(marketRef, {
+    txn.update(betRef, {
       status: 'resolved',
       resolvedOutcome: outcomeIndex,
     })
@@ -373,41 +373,41 @@ export const resolveMarket = onCall(async (request) => {
   return { success: true }
 })
 
-export const cancelMarket = onCall(async (request) => {
+export const cancelBet = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { serverId, marketId } = request.data as {
-    serverId: string
+  const { marketId, betId } = request.data as {
     marketId: string
+    betId: string
   }
 
-  if (!serverId || !marketId) {
-    throw new HttpsError('invalid-argument', 'Server ID and market ID are required')
+  if (!marketId || !betId) {
+    throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')
   }
 
-  const serverRef = db.collection('servers').doc(serverId)
-  const marketRef = serverRef.collection('markets').doc(marketId)
+  const marketRef = db.collection('markets').doc(marketId)
+  const betRef = marketRef.collection('bets').doc(betId)
 
   await db.runTransaction(async (txn) => {
-    const marketSnap = await txn.get(marketRef)
-    if (!marketSnap.exists) {
-      throw new HttpsError('not-found', 'Market not found')
+    const betSnap = await txn.get(betRef)
+    if (!betSnap.exists) {
+      throw new HttpsError('not-found', 'Bet not found')
     }
 
-    const market = marketSnap.data()!
+    const bet = betSnap.data()!
 
     // Only the creator can cancel
-    if (market.createdBy !== uid) {
-      throw new HttpsError('permission-denied', 'Only the bet creator can cancel this market')
+    if (bet.createdBy !== uid) {
+      throw new HttpsError('permission-denied', 'Only the bet creator can cancel this bet')
     }
 
-    if (market.status === 'resolved' || market.status === 'cancelled') {
-      throw new HttpsError('failed-precondition', 'Market is already resolved or cancelled')
+    if (bet.status === 'resolved' || bet.status === 'cancelled') {
+      throw new HttpsError('failed-precondition', 'Bet is already resolved or cancelled')
     }
 
     // All reads must happen before any writes in a Firestore transaction
-    const positionsSnap = await txn.get(marketRef.collection('positions'))
+    const positionsSnap = await txn.get(betRef.collection('positions'))
 
     const refundUpdates: {
       memberRef: FirebaseFirestore.DocumentReference
@@ -418,7 +418,7 @@ export const cancelMarket = onCall(async (request) => {
       const pos = posDoc.data()
       const refundAmount: number = pos.totalCost
       if (refundAmount > 0) {
-        const memberRef = serverRef.collection('members').doc(posDoc.id)
+        const memberRef = marketRef.collection('members').doc(posDoc.id)
         const memberSnap = await txn.get(memberRef)
         if (memberSnap.exists) {
           refundUpdates.push({
@@ -431,7 +431,7 @@ export const cancelMarket = onCall(async (request) => {
     }
 
     // Now perform all writes
-    txn.update(marketRef, {
+    txn.update(betRef, {
       status: 'cancelled',
       resolvedOutcome: null,
     })

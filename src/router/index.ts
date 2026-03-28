@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { useServerStore } from '@/stores/server'
+import { useMarketStore } from '@/stores/market'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -8,7 +8,7 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: () => import('@/views/ServerView.vue'),
+      component: () => import('@/views/MarketView.vue'),
     },
     {
       path: '/join',
@@ -16,19 +16,19 @@ const router = createRouter({
       component: () => import('@/views/JoinView.vue'),
     },
     {
-      path: '/markets',
-      name: 'markets',
-      component: () => import('@/views/MarketListView.vue'),
+      path: '/bets',
+      name: 'bets',
+      component: () => import('@/views/BetListView.vue'),
     },
     {
-      path: '/markets/create',
-      name: 'create-market',
-      component: () => import('@/views/CreateMarketView.vue'),
+      path: '/bets/create',
+      name: 'create-bet',
+      component: () => import('@/views/CreateBetView.vue'),
     },
     {
-      path: '/markets/:id',
-      name: 'market-detail',
-      component: () => import('@/views/MarketDetailView.vue'),
+      path: '/bets/:id',
+      name: 'bet-detail',
+      component: () => import('@/views/BetDetailView.vue'),
     },
     {
       path: '/login',
@@ -55,20 +55,20 @@ router.beforeEach(async (to) => {
     return { path: '/' }
   }
 
-  // If authenticated, ensure server store is loaded
+  // If authenticated, ensure market store is loaded
   if (authStore.isAuthenticated && to.name !== 'login') {
-    const serverStore = useServerStore()
-    if (serverStore.loading) {
-      await serverStore.loadUserServer()
+    const marketStore = useMarketStore()
+    if (marketStore.loading) {
+      await marketStore.loadUserMarket()
     }
 
-    // Redirect to /join if user has no server (unless already going there)
-    if (!serverStore.hasServer && to.name !== 'join') {
+    // Redirect to /join if user has no market (unless already going there)
+    if (!marketStore.hasMarket && to.name !== 'join') {
       return { name: 'join' }
     }
 
-    // Redirect away from /join if user already has a server
-    if (serverStore.hasServer && to.name === 'join') {
+    // Redirect away from /join if user already has a market
+    if (marketStore.hasMarket && to.name === 'join') {
       return { path: '/' }
     }
   }

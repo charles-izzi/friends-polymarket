@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useServerStore } from '@/stores/server'
-import { useMarketsStore } from '@/stores/markets'
+import { useMarketStore } from '@/stores/market'
+import { useBetsStore } from '@/stores/bets'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
-const serverStore = useServerStore()
-const marketsStore = useMarketsStore()
+const marketStore = useMarketStore()
+const betsStore = useBetsStore()
 const authStore = useAuthStore()
 
 const question = ref('')
@@ -19,7 +19,7 @@ const closesAt = ref('')
 const submitting = ref(false)
 
 const otherMembers = computed(() =>
-  serverStore.members.filter((m) => m.userId !== authStore.user?.uid),
+  marketStore.members.filter((m) => m.userId !== authStore.user?.uid),
 )
 
 const minDateTime = computed(() => {
@@ -54,14 +54,14 @@ function onTypeChange(newType: 'binary' | 'multiple_choice') {
 async function handleSubmit() {
   submitting.value = true
   try {
-    await marketsStore.createMarket({
+    await betsStore.createBet({
       question: question.value,
       type: type.value,
       outcomes: outcomes.value,
       excludedMembers: excludedMembers.value,
       closesAt: new Date(closesAt.value).toISOString(),
     })
-    router.push('/markets')
+    router.push('/bets')
   } finally {
     submitting.value = false
   }
@@ -168,8 +168,8 @@ async function handleSubmit() {
         Create Bet
       </v-btn>
 
-      <v-alert v-if="marketsStore.error" type="error" variant="tonal" class="mt-4">
-        {{ marketsStore.error }}
+      <v-alert v-if="betsStore.error" type="error" variant="tonal" class="mt-4">
+        {{ betsStore.error }}
       </v-alert>
     </v-form>
   </v-container>

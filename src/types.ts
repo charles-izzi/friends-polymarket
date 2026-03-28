@@ -1,6 +1,6 @@
 import type { Timestamp } from 'firebase/firestore'
 
-export interface Server {
+export interface Market {
   id: string
   name: string
   ownerId: string
@@ -18,7 +18,7 @@ export interface Member {
   joinedAt: Timestamp
 }
 
-export interface Market {
+export interface Bet {
   id: string
   question: string
   type: 'binary' | 'multiple_choice'

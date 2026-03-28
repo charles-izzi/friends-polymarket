@@ -1,22 +1,22 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useMarketsStore } from '@/stores/markets'
-import { useServerStore } from '@/stores/server'
+import { useBetsStore } from '@/stores/bets'
+import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 import { calcCost } from '@/utils/lmsr'
-import type { Market } from '@/types'
+import type { Bet } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
-const marketsStore = useMarketsStore()
-const serverStore = useServerStore()
+const betsStore = useBetsStore()
+const marketStore = useMarketStore()
 const authStore = useAuthStore()
 
-const marketId = computed(() => route.params.id as string)
-const market = computed(() => marketsStore.markets.find((m) => m.id === marketId.value) ?? null)
-const prices = computed(() => (market.value ? marketsStore.getPrices(market.value) : []))
-const position = computed(() => marketsStore.currentPosition)
+const betId = computed(() => route.params.id as string)
+const bet = computed(() => betsStore.bets.find((m) => m.id === betId.value) ?? null)
+const prices = computed(() => (bet.value ? betsStore.getPrices(bet.value) : []))
+const position = computed(() => betsStore.currentPosition)
 
 const selectedOutcome = ref(0)
 const shareAmount = ref(1)
@@ -27,25 +27,20 @@ const showResolveDialog = ref(false)
 const showCancelDialog = ref(false)
 const resolving = ref(false)
 
-const isCreator = computed(() => market.value?.createdBy === authStore.user?.uid)
+const isCreator = computed(() => bet.value?.createdBy === authStore.user?.uid)
 
-const isExcluded = computed(() => market.value?.excludedMembers.includes(authStore.user?.uid ?? ''))
+const isExcluded = computed(() => bet.value?.excludedMembers.includes(authStore.user?.uid ?? ''))
 
 const canTrade = computed(() => {
-  if (!market.value || market.value.status !== 'open' || isExcluded.value) return false
-  if (market.value.closesAt.toDate().getTime() <= Date.now()) return false
+  if (!bet.value || bet.value.status !== 'open' || isExcluded.value) return false
+  if (bet.value.closesAt.toDate().getTime() <= Date.now()) return false
   return true
 })
 
 const estimatedCost = computed(() => {
-  if (!market.value || shareAmount.value <= 0) return 0
+  if (!bet.value || shareAmount.value <= 0) return 0
   const shares = tradeMode.value === 'sell' ? -shareAmount.value : shareAmount.value
-  return calcCost(
-    market.value.sharesSold,
-    selectedOutcome.value,
-    shares,
-    market.value.liquidityParam,
-  )
+  return calcCost(bet.value.sharesSold, selectedOutcome.value, shares, bet.value.liquidityParam)
 })
 
 const maxSellShares = computed(() => {
@@ -56,14 +51,14 @@ const maxSellShares = computed(() => {
 const canSubmitTrade = computed(() => {
   if (!canTrade.value || shareAmount.value <= 0 || submitting.value) return false
   if (tradeMode.value === 'sell' && shareAmount.value > maxSellShares.value) return false
-  if (tradeMode.value === 'buy' && estimatedCost.value > (serverStore.currentMember?.balance ?? 0))
+  if (tradeMode.value === 'buy' && estimatedCost.value > (marketStore.currentMember?.balance ?? 0))
     return false
   return true
 })
 
 function timeRemaining(): string {
-  if (!market.value) return ''
-  const closes = market.value.closesAt.toDate()
+  if (!bet.value) return ''
+  const closes = bet.value.closesAt.toDate()
   const now = new Date()
   if (closes <= now) return 'Closed'
   const diff = closes.getTime() - now.getTime()
@@ -75,7 +70,7 @@ function timeRemaining(): string {
 }
 
 function memberName(userId: string): string {
-  return serverStore.members.find((m) => m.userId === userId)?.displayName ?? 'Unknown'
+  return marketStore.members.find((m) => m.userId === userId)?.displayName ?? 'Unknown'
 }
 
 async function handleTrade() {
@@ -83,8 +78,8 @@ async function handleTrade() {
   submitting.value = true
   try {
     const shares = tradeMode.value === 'sell' ? -shareAmount.value : shareAmount.value
-    await marketsStore.executeTrade({
-      marketId: marketId.value,
+    await betsStore.executeTrade({
+      betId: betId.value,
       outcomeIndex: selectedOutcome.value,
       shares,
     })
@@ -97,7 +92,7 @@ async function handleTrade() {
 async function handleResolve() {
   resolving.value = true
   try {
-    await marketsStore.resolveMarket(marketId.value, resolveOutcome.value)
+    await betsStore.resolveBet(betId.value, resolveOutcome.value)
     showResolveDialog.value = false
   } finally {
     resolving.value = false
@@ -107,7 +102,7 @@ async function handleResolve() {
 async function handleCancel() {
   resolving.value = true
   try {
-    await marketsStore.cancelMarket(marketId.value)
+    await betsStore.cancelBet(betId.value)
     showCancelDialog.value = false
   } finally {
     resolving.value = false
@@ -115,14 +110,14 @@ async function handleCancel() {
 }
 
 onMounted(() => {
-  if (!marketsStore.markets.length) {
-    marketsStore.listenToMarkets()
+  if (!betsStore.bets.length) {
+    betsStore.listenToBets()
   }
-  marketsStore.listenToMarket(marketId.value)
+  betsStore.listenToBet(betId.value)
 })
 
 onUnmounted(() => {
-  marketsStore.stopListeningToMarket()
+  betsStore.stopListeningToBet()
 })
 
 // Reset share amount when switching trade mode
@@ -134,11 +129,11 @@ watch(tradeMode, () => {
 <template>
   <v-container max-width="700">
     <div class="d-flex align-center mb-4">
-      <v-btn icon="mdi-arrow-left" variant="text" @click="router.push('/markets')" />
-      <h1 class="text-h5 ml-2 flex-grow-1">{{ market?.question }}</h1>
+      <v-btn icon="mdi-arrow-left" variant="text" @click="router.push('/bets')" />
+      <h1 class="text-h5 ml-2 flex-grow-1">{{ bet?.question }}</h1>
     </div>
 
-    <template v-if="!market">
+    <template v-if="!bet">
       <v-progress-linear indeterminate />
     </template>
 
@@ -147,20 +142,20 @@ watch(tradeMode, () => {
       <div class="d-flex align-center ga-3 mb-4">
         <v-chip
           :color="
-            market.status === 'open'
+            bet.status === 'open'
               ? 'success'
-              : market.status === 'resolved'
+              : bet.status === 'resolved'
                 ? 'info'
-                : market.status === 'cancelled'
+                : bet.status === 'cancelled'
                   ? 'error'
                   : 'warning'
           "
           size="small"
           variant="tonal"
         >
-          {{ market.status }}
+          {{ bet.status }}
         </v-chip>
-        <span v-if="market.status === 'open'" class="text-caption text-medium-emphasis">{{
+        <span v-if="bet.status === 'open'" class="text-caption text-medium-emphasis">{{
           timeRemaining()
         }}</span>
         <v-chip v-if="isExcluded" color="error" size="small" variant="tonal">
@@ -170,28 +165,28 @@ watch(tradeMode, () => {
 
       <!-- Resolved banner -->
       <v-alert
-        v-if="market.status === 'resolved' && market.resolvedOutcome !== null"
+        v-if="bet.status === 'resolved' && bet.resolvedOutcome !== null"
         type="success"
         variant="tonal"
         class="mb-4"
       >
-        <strong>Resolved:</strong> "{{ market.outcomes[market.resolvedOutcome] }}" won!
-        <span v-if="position && (position.shares[market.resolvedOutcome] ?? 0) > 0">
+        <strong>Resolved:</strong> "{{ bet.outcomes[bet.resolvedOutcome] }}" won!
+        <span v-if="position && (position.shares[bet.resolvedOutcome] ?? 0) > 0">
           You won
-          <strong>{{ (position.shares[market.resolvedOutcome] ?? 0).toFixed(2) }}</strong> coins!
+          <strong>{{ (position.shares[bet.resolvedOutcome] ?? 0).toFixed(2) }}</strong> coins!
         </span>
       </v-alert>
 
       <!-- Cancelled banner -->
-      <v-alert v-if="market.status === 'cancelled'" type="warning" variant="tonal" class="mb-4">
-        This market was cancelled. All positions have been refunded at cost basis.
+      <v-alert v-if="bet.status === 'cancelled'" type="warning" variant="tonal" class="mb-4">
+        This bet was cancelled. All positions have been refunded at cost basis.
       </v-alert>
 
       <!-- Outcome prices -->
       <v-card class="mb-4" variant="outlined">
         <v-card-title class="text-subtitle-1">Outcome Prices</v-card-title>
         <v-card-text>
-          <div v-for="(outcome, i) in market.outcomes" :key="i" class="mb-3">
+          <div v-for="(outcome, i) in bet.outcomes" :key="i" class="mb-3">
             <div class="d-flex justify-space-between mb-1">
               <span class="text-body-2">{{ outcome }}</span>
               <span class="text-body-2 font-weight-bold">
@@ -214,7 +209,7 @@ watch(tradeMode, () => {
         <v-card-text>
           <div class="d-flex flex-wrap ga-3">
             <v-chip
-              v-for="(outcome, i) in market.outcomes"
+              v-for="(outcome, i) in bet.outcomes"
               :key="i"
               :color="(position.shares[i] ?? 0) > 0 ? 'primary' : 'default'"
               variant="tonal"
@@ -245,7 +240,7 @@ watch(tradeMode, () => {
 
           <v-select
             v-model="selectedOutcome"
-            :items="market.outcomes.map((o, i) => ({ title: o, value: i }))"
+            :items="bet.outcomes.map((o, i) => ({ title: o, value: i }))"
             label="Outcome"
             variant="outlined"
             density="comfortable"
@@ -281,7 +276,7 @@ watch(tradeMode, () => {
           >
             <template v-if="tradeMode === 'buy'">
               Cost: <strong>{{ estimatedCost.toFixed(2) }}</strong> coins &mdash; Balance:
-              {{ serverStore.currentMember?.balance?.toFixed(2) ?? 0 }}
+              {{ marketStore.currentMember?.balance?.toFixed(2) ?? 0 }}
             </template>
             <template v-else>
               You receive: <strong>{{ Math.abs(estimatedCost).toFixed(2) }}</strong> coins
@@ -299,18 +294,18 @@ watch(tradeMode, () => {
             {{ tradeMode === 'buy' ? 'Buy' : 'Sell' }} {{ shareAmount }} share{{
               shareAmount !== 1 ? 's' : ''
             }}
-            of "{{ market.outcomes[selectedOutcome] }}"
+            of "{{ bet.outcomes[selectedOutcome] }}"
           </v-btn>
 
-          <v-alert v-if="marketsStore.error" type="error" variant="tonal" class="mt-3">
-            {{ marketsStore.error }}
+          <v-alert v-if="betsStore.error" type="error" variant="tonal" class="mt-3">
+            {{ betsStore.error }}
           </v-alert>
         </v-card-text>
       </v-card>
 
       <!-- Creator actions: resolve or cancel -->
       <v-card
-        v-if="isCreator && (market.status === 'open' || market.status === 'closed')"
+        v-if="isCreator && (bet.status === 'open' || bet.status === 'closed')"
         class="mb-4"
         variant="outlined"
         color="warning"
@@ -325,8 +320,8 @@ watch(tradeMode, () => {
               Cancel Bet
             </v-btn>
           </div>
-          <v-alert v-if="marketsStore.error" type="error" variant="tonal" class="mt-3">
-            {{ marketsStore.error }}
+          <v-alert v-if="betsStore.error" type="error" variant="tonal" class="mt-3">
+            {{ betsStore.error }}
           </v-alert>
         </v-card-text>
       </v-card>
@@ -338,12 +333,7 @@ watch(tradeMode, () => {
           <v-card-text>
             <p class="text-body-2 mb-3">Select the winning outcome:</p>
             <v-radio-group v-model="resolveOutcome">
-              <v-radio
-                v-for="(outcome, i) in market.outcomes"
-                :key="i"
-                :label="outcome"
-                :value="i"
-              />
+              <v-radio v-for="(outcome, i) in bet.outcomes" :key="i" :label="outcome" :value="i" />
             </v-radio-group>
           </v-card-text>
           <v-card-actions>
@@ -376,10 +366,10 @@ watch(tradeMode, () => {
       <!-- Recent trades -->
       <v-card variant="outlined">
         <v-card-title class="text-subtitle-1">
-          Recent Trades ({{ marketsStore.trades.length }})
+          Recent Trades ({{ betsStore.trades.length }})
         </v-card-title>
-        <v-list v-if="marketsStore.trades.length > 0" density="compact">
-          <v-list-item v-for="trade in marketsStore.trades" :key="trade.id">
+        <v-list v-if="betsStore.trades.length > 0" density="compact">
+          <v-list-item v-for="trade in betsStore.trades" :key="trade.id">
             <template #prepend>
               <v-icon
                 :icon="trade.shares > 0 ? 'mdi-arrow-up-bold' : 'mdi-arrow-down-bold'"
@@ -391,7 +381,7 @@ watch(tradeMode, () => {
               {{ memberName(trade.userId) }}
               {{ trade.shares > 0 ? 'bought' : 'sold' }}
               {{ Math.abs(trade.shares) }}
-              "{{ market.outcomes[trade.outcomeIndex] }}"
+              "{{ bet.outcomes[trade.outcomeIndex] }}"
             </v-list-item-title>
             <v-list-item-subtitle class="text-caption">
               {{ trade.shares > 0 ? 'Paid' : 'Received' }}

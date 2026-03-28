@@ -12,28 +12,28 @@ import {
 import { getFunctions, httpsCallable } from 'firebase/functions'
 import { db } from '@/firebase'
 import { useAuthStore } from '@/stores/auth'
-import type { Server, Member } from '@/types'
+import type { Market, Member } from '@/types'
 
-export const useServerStore = defineStore('server', () => {
-  const server = ref<Server | null>(null)
+export const useMarketStore = defineStore('market', () => {
+  const market = ref<Market | null>(null)
   const members = ref<Member[]>([])
   const loading = ref(true)
   const error = ref('')
 
   const functions = getFunctions()
-  const hasServer = computed(() => !!server.value)
+  const hasMarket = computed(() => !!market.value)
   const currentMember = computed(() => {
     const authStore = useAuthStore()
     return members.value.find((m) => m.userId === authStore.user?.uid) ?? null
   })
 
-  let unsubServer: (() => void) | null = null
+  let unsubMarket: (() => void) | null = null
   let unsubMembers: (() => void) | null = null
 
-  async function loadUserServer() {
+  async function loadUserMarket() {
     const authStore = useAuthStore()
     if (!authStore.user) {
-      server.value = null
+      market.value = null
       members.value = []
       loading.value = false
       return
@@ -43,7 +43,7 @@ export const useServerStore = defineStore('server', () => {
     error.value = ''
 
     try {
-      // Find which server this user belongs to via collectionGroup query
+      // Find which market this user belongs to via collectionGroup query
       const memberQuery = query(
         collectionGroup(db, 'members'),
         where('userId', '==', authStore.user.uid),
@@ -52,26 +52,26 @@ export const useServerStore = defineStore('server', () => {
       const memberSnap = await getDocs(memberQuery)
 
       if (memberSnap.empty || !memberSnap.docs[0]) {
-        server.value = null
+        market.value = null
         members.value = []
         loading.value = false
         return
       }
 
-      // The member doc path is servers/{serverId}/members/{userId}
+      // The member doc path is markets/{marketId}/members/{userId}
       const memberDoc = memberSnap.docs[0]
       if (!memberDoc) {
         loading.value = false
         return
       }
-      const serverRef = memberDoc.ref.parent.parent!
-      const serverId = serverRef.id
+      const marketRef = memberDoc.ref.parent.parent!
+      const marketId = marketRef.id
 
-      // Listen to server doc, waiting for first snapshot before resolving
-      const serverReady = new Promise<void>((resolve) => {
-        unsubServer = onSnapshot(serverRef, (snap) => {
+      // Listen to market doc, waiting for first snapshot before resolving
+      const marketReady = new Promise<void>((resolve) => {
+        unsubMarket = onSnapshot(marketRef, (snap) => {
           if (snap.exists()) {
-            server.value = { id: snap.id, ...snap.data() } as Server
+            market.value = { id: snap.id, ...snap.data() } as Market
           }
           resolve()
         })
@@ -79,69 +79,69 @@ export const useServerStore = defineStore('server', () => {
 
       // Listen to members collection, waiting for first snapshot before resolving
       const membersReady = new Promise<void>((resolve) => {
-        unsubMembers = onSnapshot(collection(db, 'servers', serverId, 'members'), (snap) => {
+        unsubMembers = onSnapshot(collection(db, 'markets', marketId, 'members'), (snap) => {
           members.value = snap.docs.map((d) => ({ userId: d.id, ...d.data() }) as Member)
           resolve()
         })
       })
 
-      await Promise.all([serverReady, membersReady])
+      await Promise.all([marketReady, membersReady])
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : 'Failed to load server'
+      error.value = e instanceof Error ? e.message : 'Failed to load market'
     } finally {
       loading.value = false
     }
   }
 
-  async function createServer(name: string) {
+  async function createMarket(name: string) {
     error.value = ''
     try {
-      const fn = httpsCallable<{ name: string }, { serverId: string; inviteCode: string }>(
+      const fn = httpsCallable<{ name: string }, { marketId: string; inviteCode: string }>(
         functions,
-        'createServer',
+        'createMarket',
       )
       await fn({ name })
-      await loadUserServer()
+      await loadUserMarket()
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : 'Failed to create server'
+      error.value = e instanceof Error ? e.message : 'Failed to create market'
       throw e
     }
   }
 
-  async function joinServer(inviteCode: string) {
+  async function joinMarket(inviteCode: string) {
     error.value = ''
     try {
-      const fn = httpsCallable<{ inviteCode: string }, { serverId: string }>(
+      const fn = httpsCallable<{ inviteCode: string }, { marketId: string }>(
         functions,
-        'joinServer',
+        'joinMarket',
       )
       await fn({ inviteCode })
-      await loadUserServer()
+      await loadUserMarket()
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : 'Failed to join server'
+      error.value = e instanceof Error ? e.message : 'Failed to join market'
       throw e
     }
   }
 
   function cleanup() {
-    unsubServer?.()
+    unsubMarket?.()
     unsubMembers?.()
-    unsubServer = null
+    unsubMarket = null
     unsubMembers = null
-    server.value = null
+    market.value = null
     members.value = []
   }
 
   return {
-    server,
+    market,
     members,
     loading,
     error,
-    hasServer,
+    hasMarket,
     currentMember,
-    loadUserServer,
-    createServer,
-    joinServer,
+    loadUserMarket,
+    createMarket,
+    joinMarket,
     cleanup,
   }
 })

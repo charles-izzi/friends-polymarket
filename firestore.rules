@@ -3,43 +3,43 @@ rules_version='2'
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: check if the requesting user is a member of the given server
-    function isMember(serverId) {
-      return exists(/databases/$(database)/documents/servers/$(serverId)/members/$(request.auth.uid));
+    // Helper: check if the requesting user is a member of the given market
+    function isMember(marketId) {
+      return exists(/databases/$(database)/documents/markets/$(marketId)/members/$(request.auth.uid));
     }
 
-    // Servers: members can read their server doc.
+    // Markets: members can read their market doc.
     // Unauthenticated writes blocked; all writes via Cloud Functions (admin SDK).
-    match /servers/{serverId} {
-      allow read: if request.auth != null && isMember(serverId);
+    match /markets/{marketId} {
+      allow read: if request.auth != null && isMember(marketId);
       allow write: if false;
 
-      // Members: server members can list all members.
+      // Members: market members can list all members.
       match /members/{userId} {
-        allow read: if request.auth != null && isMember(serverId);
+        allow read: if request.auth != null && isMember(marketId);
         allow write: if false;
       }
 
-      // Markets: server members can read all markets.
-      match /markets/{marketId} {
-        allow read: if request.auth != null && isMember(serverId);
+      // Bets: market members can read all bets.
+      match /bets/{betId} {
+        allow read: if request.auth != null && isMember(marketId);
         allow write: if false;
 
         match /positions/{posUserId} {
-          allow read: if request.auth != null && isMember(serverId);
+          allow read: if request.auth != null && isMember(marketId);
           allow write: if false;
         }
 
         match /trades/{tradeId} {
-          allow read: if request.auth != null && isMember(serverId);
+          allow read: if request.auth != null && isMember(marketId);
           allow write: if false;
         }
       }
     }
 
     // CollectionGroup rule for 'members' — allows the collectionGroup query
-    // used to find which server a user belongs to. Only lets a user read
-    // their own member document across all servers.
+    // used to find which market a user belongs to. Only lets a user read
+    // their own member document across all markets.
     match /{path=**}/members/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
     }

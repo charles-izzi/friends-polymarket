@@ -1,35 +1,35 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMarketsStore } from '@/stores/markets'
-import type { Market } from '@/types'
+import { useBetsStore } from '@/stores/bets'
+import type { Bet } from '@/types'
 
 const router = useRouter()
-const marketsStore = useMarketsStore()
+const betsStore = useBetsStore()
 
 onMounted(() => {
-  marketsStore.listenToMarkets()
+  betsStore.listenToBets()
 })
 
-function getPriceLabel(market: Market, index: number): string {
-  const prices = marketsStore.getPrices(market)
+function getPriceLabel(bet: Bet, index: number): string {
+  const prices = betsStore.getPrices(bet)
   return `${((prices[index] ?? 0) * 100).toFixed(0)}%`
 }
 
-function topOutcome(market: Market): { label: string; pct: string } {
-  const prices = marketsStore.getPrices(market)
+function topOutcome(bet: Bet): { label: string; pct: string } {
+  const prices = betsStore.getPrices(bet)
   let maxIdx = 0
   for (let i = 1; i < prices.length; i++) {
     if ((prices[i] ?? 0) > (prices[maxIdx] ?? 0)) maxIdx = i
   }
   return {
-    label: market.outcomes[maxIdx] ?? '',
+    label: bet.outcomes[maxIdx] ?? '',
     pct: `${((prices[maxIdx] ?? 0) * 100).toFixed(0)}%`,
   }
 }
 
-function timeRemaining(market: Market): string {
-  const closes = market.closesAt.toDate()
+function timeRemaining(bet: Bet): string {
+  const closes = bet.closesAt.toDate()
   const now = new Date()
   if (closes <= now) return 'Closed'
   const diff = closes.getTime() - now.getTime()
@@ -41,8 +41,8 @@ function timeRemaining(market: Market): string {
   return `${mins}m left`
 }
 
-function statusColor(market: Market): string {
-  switch (market.status) {
+function statusColor(bet: Bet): string {
+  switch (bet.status) {
     case 'open':
       return 'success'
     case 'closed':
@@ -60,61 +60,61 @@ function statusColor(market: Market): string {
 <template>
   <v-container>
     <div class="d-flex align-center justify-space-between mb-4">
-      <h1 class="text-h5">Markets</h1>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="router.push('/markets/create')">
+      <h1 class="text-h5">Bets</h1>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="router.push('/bets/create')">
         New Bet
       </v-btn>
     </div>
 
-    <v-progress-linear v-if="marketsStore.loading" indeterminate class="mb-4" />
+    <v-progress-linear v-if="betsStore.loading" indeterminate class="mb-4" />
 
-    <div v-if="!marketsStore.loading && marketsStore.markets.length === 0" class="text-center py-8">
+    <div v-if="!betsStore.loading && betsStore.bets.length === 0" class="text-center py-8">
       <v-icon icon="mdi-chart-line" size="64" color="grey-lighten-1" class="mb-4" />
       <p class="text-h6 text-medium-emphasis">No bets yet</p>
       <p class="text-body-2 text-medium-emphasis mb-4">Create the first one!</p>
-      <v-btn color="primary" @click="router.push('/markets/create')">Create a Bet</v-btn>
+      <v-btn color="primary" @click="router.push('/bets/create')">Create a Bet</v-btn>
     </div>
 
     <v-card
-      v-for="market in marketsStore.markets"
-      :key="market.id"
+      v-for="bet in betsStore.bets"
+      :key="bet.id"
       class="mb-3 cursor-pointer"
       variant="outlined"
       hover
-      @click="router.push(`/markets/${market.id}`)"
+      @click="router.push(`/bets/${bet.id}`)"
     >
       <v-card-text>
         <div class="d-flex align-center justify-space-between mb-2">
-          <v-chip :color="statusColor(market)" size="small" variant="tonal">
-            {{ market.status }}
+          <v-chip :color="statusColor(bet)" size="small" variant="tonal">
+            {{ bet.status }}
           </v-chip>
           <span class="text-caption text-medium-emphasis">
-            <template v-if="market.status === 'open'">{{ timeRemaining(market) }}</template>
-            <template v-else-if="market.status === 'resolved' && market.resolvedOutcome !== null">
-              Winner: {{ market.outcomes[market.resolvedOutcome] }}
+            <template v-if="bet.status === 'open'">{{ timeRemaining(bet) }}</template>
+            <template v-else-if="bet.status === 'resolved' && bet.resolvedOutcome !== null">
+              Winner: {{ bet.outcomes[bet.resolvedOutcome] }}
             </template>
-            <template v-else-if="market.status === 'cancelled'">Refunded</template>
+            <template v-else-if="bet.status === 'cancelled'">Refunded</template>
           </span>
         </div>
 
-        <p class="text-subtitle-1 font-weight-medium mb-3">{{ market.question }}</p>
+        <p class="text-subtitle-1 font-weight-medium mb-3">{{ bet.question }}</p>
 
         <div class="d-flex flex-wrap ga-2">
           <v-chip
-            v-for="(outcome, i) in market.outcomes"
+            v-for="(outcome, i) in bet.outcomes"
             :key="i"
             :color="i === 0 ? 'primary' : 'default'"
             variant="tonal"
             size="small"
           >
             {{ outcome }}
-            <span class="ml-1 font-weight-bold">{{ getPriceLabel(market, i) }}</span>
+            <span class="ml-1 font-weight-bold">{{ getPriceLabel(bet, i) }}</span>
           </v-chip>
         </div>
 
-        <div v-if="market.outcomes.length === 2" class="mt-3">
+        <div v-if="bet.outcomes.length === 2" class="mt-3">
           <v-progress-linear
-            :model-value="(marketsStore.getPrices(market)[0] ?? 0) * 100"
+            :model-value="(betsStore.getPrices(bet)[0] ?? 0) * 100"
             color="primary"
             bg-color="grey-lighten-2"
             height="8"
