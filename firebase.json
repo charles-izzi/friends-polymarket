@@ -9,6 +9,13 @@
       }
     ]
   },
+  "firestore": [
+    {
+      "database": "staging",
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
+    }
+  ],
   "functions": {
     "source": "functions",
     "predeploy": ["npm --prefix functions run build"]

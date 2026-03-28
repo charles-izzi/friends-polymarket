@@ -6,7 +6,7 @@ import * as crypto from 'crypto'
 import { calcCost, calcPrices } from './lmsr'
 
 initializeApp()
-const db = getFirestore()
+const db = getFirestore(process.env.FIRESTORE_DATABASE || 'staging')
 
 setGlobalOptions({ maxInstances: 10 })
 

@@ -60,6 +60,10 @@ export const useServerStore = defineStore('server', () => {
 
       // The member doc path is servers/{serverId}/members/{userId}
       const memberDoc = memberSnap.docs[0]
+      if (!memberDoc) {
+        loading.value = false
+        return
+      }
       const serverRef = memberDoc.ref.parent.parent!
       const serverId = serverRef.id
 
