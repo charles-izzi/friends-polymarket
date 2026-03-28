@@ -67,17 +67,25 @@ export const useServerStore = defineStore('server', () => {
       const serverRef = memberDoc.ref.parent.parent!
       const serverId = serverRef.id
 
-      // Listen to server doc
-      unsubServer = onSnapshot(serverRef, (snap) => {
-        if (snap.exists()) {
-          server.value = { id: snap.id, ...snap.data() } as Server
-        }
+      // Listen to server doc, waiting for first snapshot before resolving
+      const serverReady = new Promise<void>((resolve) => {
+        unsubServer = onSnapshot(serverRef, (snap) => {
+          if (snap.exists()) {
+            server.value = { id: snap.id, ...snap.data() } as Server
+          }
+          resolve()
+        })
       })
 
-      // Listen to members collection
-      unsubMembers = onSnapshot(collection(db, 'servers', serverId, 'members'), (snap) => {
-        members.value = snap.docs.map((d) => ({ userId: d.id, ...d.data() }) as Member)
+      // Listen to members collection, waiting for first snapshot before resolving
+      const membersReady = new Promise<void>((resolve) => {
+        unsubMembers = onSnapshot(collection(db, 'servers', serverId, 'members'), (snap) => {
+          members.value = snap.docs.map((d) => ({ userId: d.id, ...d.data() }) as Member)
+          resolve()
+        })
       })
+
+      await Promise.all([serverReady, membersReady])
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to load server'
     } finally {

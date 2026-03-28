@@ -8,7 +8,7 @@ import { calcCost, calcPrices } from './lmsr'
 initializeApp()
 const db = getFirestore(process.env.FIRESTORE_DATABASE || 'staging')
 
-setGlobalOptions({ maxInstances: 10, invoker: 'public' })
+setGlobalOptions({ maxInstances: 10 })
 
 function generateInviteCode(): string {
   return crypto.randomBytes(4).toString('hex')
@@ -334,26 +334,39 @@ export const resolveMarket = onCall(async (request) => {
       throw new HttpsError('invalid-argument', 'Invalid outcome index')
     }
 
-    // Update market status
+    // All reads must happen before any writes in a Firestore transaction
+    const positionsSnap = await txn.get(marketRef.collection('positions'))
+
+    // Read all member docs for winners
+    const winnerUpdates: {
+      memberRef: FirebaseFirestore.DocumentReference
+      winningShares: number
+      currentBalance: number
+    }[] = []
+    for (const posDoc of positionsSnap.docs) {
+      const pos = posDoc.data()
+      const winningShares: number = pos.shares[outcomeIndex] ?? 0
+      if (winningShares > 0) {
+        const memberRef = serverRef.collection('members').doc(posDoc.id)
+        const memberSnap = await txn.get(memberRef)
+        if (memberSnap.exists) {
+          winnerUpdates.push({
+            memberRef,
+            winningShares,
+            currentBalance: memberSnap.data()!.balance,
+          })
+        }
+      }
+    }
+
+    // Now perform all writes
     txn.update(marketRef, {
       status: 'resolved',
       resolvedOutcome: outcomeIndex,
     })
 
-    // Get all positions and credit winners
-    const positionsSnap = await txn.get(marketRef.collection('positions'))
-    for (const posDoc of positionsSnap.docs) {
-      const pos = posDoc.data()
-      const winningShares: number = pos.shares[outcomeIndex] ?? 0
-      if (winningShares > 0) {
-        // Each winning share pays out 1 coin
-        const memberRef = serverRef.collection('members').doc(posDoc.id)
-        const memberSnap = await txn.get(memberRef)
-        if (memberSnap.exists) {
-          const currentBalance: number = memberSnap.data()!.balance
-          txn.update(memberRef, { balance: currentBalance + winningShares })
-        }
-      }
+    for (const { memberRef, winningShares, currentBalance } of winnerUpdates) {
+      txn.update(memberRef, { balance: currentBalance + winningShares })
     }
   })
 
@@ -393,14 +406,14 @@ export const cancelMarket = onCall(async (request) => {
       throw new HttpsError('failed-precondition', 'Market is already resolved or cancelled')
     }
 
-    // Update market status
-    txn.update(marketRef, {
-      status: 'cancelled',
-      resolvedOutcome: null,
-    })
-
-    // Refund all positions at cost basis
+    // All reads must happen before any writes in a Firestore transaction
     const positionsSnap = await txn.get(marketRef.collection('positions'))
+
+    const refundUpdates: {
+      memberRef: FirebaseFirestore.DocumentReference
+      refundAmount: number
+      currentBalance: number
+    }[] = []
     for (const posDoc of positionsSnap.docs) {
       const pos = posDoc.data()
       const refundAmount: number = pos.totalCost
@@ -408,10 +421,23 @@ export const cancelMarket = onCall(async (request) => {
         const memberRef = serverRef.collection('members').doc(posDoc.id)
         const memberSnap = await txn.get(memberRef)
         if (memberSnap.exists) {
-          const currentBalance: number = memberSnap.data()!.balance
-          txn.update(memberRef, { balance: currentBalance + refundAmount })
+          refundUpdates.push({
+            memberRef,
+            refundAmount,
+            currentBalance: memberSnap.data()!.balance,
+          })
         }
       }
+    }
+
+    // Now perform all writes
+    txn.update(marketRef, {
+      status: 'cancelled',
+      resolvedOutcome: null,
+    })
+
+    for (const { memberRef, refundAmount, currentBalance } of refundUpdates) {
+      txn.update(memberRef, { balance: currentBalance + refundAmount })
     }
   })
 

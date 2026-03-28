@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { shallowRef, ref, computed, markRaw } from 'vue'
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -12,20 +12,29 @@ import {
 import { auth } from '@/firebase'
 
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref<User | null>(null)
+  const user = shallowRef<User | null>(null)
   const loading = ref(true)
   const error = ref('')
 
   const isAuthenticated = computed(() => !!user.value)
 
+  let initPromise: Promise<void> | null = null
+
   function init() {
-    return new Promise<void>((resolve) => {
-      onAuthStateChanged(auth, (firebaseUser) => {
-        user.value = firebaseUser
-        loading.value = false
-        resolve()
+    if (!initPromise) {
+      initPromise = new Promise<void>((resolve) => {
+        onAuthStateChanged(auth, (firebaseUser) => {
+          user.value = firebaseUser ? markRaw(firebaseUser) : null
+          loading.value = false
+          resolve()
+        })
       })
-    })
+    }
+    return initPromise
+  }
+
+  function ready() {
+    return initPromise ?? init()
   }
 
   async function loginWithGoogle() {
@@ -65,6 +74,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     error,
     init,
+    ready,
     loginWithGoogle,
     loginWithEmail,
     registerWithEmail,

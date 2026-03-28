@@ -42,6 +42,11 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const authStore = useAuthStore()
 
+  // Wait for Firebase auth to resolve before making any decisions
+  if (authStore.loading) {
+    await authStore.ready()
+  }
+
   if (!to.meta.public && !authStore.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
