@@ -8,7 +8,7 @@ import { calcCost, calcPrices } from './lmsr'
 initializeApp()
 const db = getFirestore(process.env.FIRESTORE_DATABASE || 'staging')
 
-setGlobalOptions({ maxInstances: 10 })
+setGlobalOptions({ maxInstances: 10, invoker: 'public' })
 
 function generateInviteCode(): string {
   return crypto.randomBytes(4).toString('hex')
