@@ -2,17 +2,46 @@ rules_version='2'
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      // This rule allows anyone with your database reference to view, edit,
-      // and delete all data in your database. It is useful for getting
-      // started, but it is configured to expire after 30 days because it
-      // leaves your app open to attackers. At that time, all client
-      // requests to your database will be denied.
-      //
-      // Make sure to write security rules for your app before that time, or
-      // else all client requests to your database will be denied until you
-      // update your rules.
-      allow read, write: if request.time < timestamp.date(2026, 4, 14);
+
+    // Helper: check if the requesting user is a member of the given server
+    function isMember(serverId) {
+      return exists(/databases/$(database)/documents/servers/$(serverId)/members/$(request.auth.uid));
+    }
+
+    // Servers: members can read their server doc.
+    // Unauthenticated writes blocked; all writes via Cloud Functions (admin SDK).
+    match /servers/{serverId} {
+      allow read: if request.auth != null && isMember(serverId);
+      allow write: if false;
+
+      // Members: server members can list all members.
+      match /members/{userId} {
+        allow read: if request.auth != null && isMember(serverId);
+        allow write: if false;
+      }
+
+      // Markets: server members can read all markets.
+      match /markets/{marketId} {
+        allow read: if request.auth != null && isMember(serverId);
+        allow write: if false;
+
+        match /positions/{posUserId} {
+          allow read: if request.auth != null && isMember(serverId);
+          allow write: if false;
+        }
+
+        match /trades/{tradeId} {
+          allow read: if request.auth != null && isMember(serverId);
+          allow write: if false;
+        }
+      }
+    }
+
+    // CollectionGroup rule for 'members' — allows the collectionGroup query
+    // used to find which server a user belongs to. Only lets a user read
+    // their own member document across all servers.
+    match /{path=**}/members/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
     }
   }
 }

@@ -1,0 +1,39 @@
+/**
+ * LMSR (Logarithmic Market Scoring Rule) — server-side authoritative math.
+ * All trade costs are computed here inside Firestore transactions.
+ */
+
+/**
+ * Calculate price (implied probability) of each outcome.
+ * price_i = e^(q_i / b) / Σ_j e^(q_j / b)
+ */
+export function calcPrices(sharesSold: number[], b: number): number[] {
+  const max = Math.max(...sharesSold)
+  const exps = sharesSold.map((q) => Math.exp((q - max) / b))
+  const sum = exps.reduce((a, v) => a + v, 0)
+  return exps.map((e) => e / sum)
+}
+
+/**
+ * Cost function C(q) = b * ln(Σ_j e^(q_j / b))
+ */
+export function costFunction(sharesSold: number[], b: number): number {
+  const max = Math.max(...sharesSold)
+  const sumExp = sharesSold.map((q) => Math.exp((q - max) / b)).reduce((a, v) => a + v, 0)
+  return b * (max / b + Math.log(sumExp))
+}
+
+/**
+ * Cost to buy `numShares` of outcome `outcomeIndex`.
+ * Positive = buy (user pays), negative = sell (user receives).
+ */
+export function calcCost(
+  sharesSold: number[],
+  outcomeIndex: number,
+  numShares: number,
+  b: number,
+): number {
+  const newSharesSold = [...sharesSold]
+  newSharesSold[outcomeIndex] = (newSharesSold[outcomeIndex] ?? 0) + numShares
+  return costFunction(newSharesSold, b) - costFunction(sharesSold, b)
+}
