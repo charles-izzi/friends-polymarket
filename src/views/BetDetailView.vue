@@ -51,8 +51,6 @@ const maxSellShares = computed(() => {
 const canSubmitTrade = computed(() => {
   if (!canTrade.value || shareAmount.value <= 0 || submitting.value) return false
   if (tradeMode.value === 'sell' && shareAmount.value > maxSellShares.value) return false
-  if (tradeMode.value === 'buy' && estimatedCost.value > (marketStore.currentMember?.balance ?? 0))
-    return false
   return true
 })
 
@@ -173,7 +171,7 @@ watch(tradeMode, () => {
         <strong>Resolved:</strong> "{{ bet.outcomes[bet.resolvedOutcome] }}" won!
         <span v-if="position && (position.shares[bet.resolvedOutcome] ?? 0) > 0">
           You won
-          <strong>{{ (position.shares[bet.resolvedOutcome] ?? 0).toFixed(2) }}</strong> coins!
+          <strong>{{ (position.shares[bet.resolvedOutcome] ?? 0).toFixed(2) }}</strong> dollars!
         </span>
       </v-alert>
 
@@ -218,7 +216,7 @@ watch(tradeMode, () => {
             </v-chip>
           </div>
           <p class="text-caption text-medium-emphasis mt-2">
-            Total invested: {{ position.totalCost.toFixed(2) }} coins
+            Total invested: {{ position.totalCost.toFixed(2) }} dollars
           </p>
         </v-card-text>
       </v-card>
@@ -275,11 +273,13 @@ watch(tradeMode, () => {
             class="mb-3"
           >
             <template v-if="tradeMode === 'buy'">
-              Cost: <strong>{{ estimatedCost.toFixed(2) }}</strong> coins &mdash; Balance:
-              {{ marketStore.currentMember?.balance?.toFixed(2) ?? 0 }}
+              Cost: <strong>{{ estimatedCost.toFixed(2) }}</strong> dollars &mdash; Balance:
+              <span :class="(marketStore.currentMember?.balance ?? 0) < 0 ? 'text-error' : ''">
+                ${{ marketStore.currentMember?.balance?.toFixed(2) ?? '0.00' }}
+              </span>
             </template>
             <template v-else>
-              You receive: <strong>{{ Math.abs(estimatedCost).toFixed(2) }}</strong> coins
+              You receive: <strong>{{ Math.abs(estimatedCost).toFixed(2) }}</strong> dollars
             </template>
           </v-alert>
 
@@ -385,7 +385,7 @@ watch(tradeMode, () => {
             </v-list-item-title>
             <v-list-item-subtitle class="text-caption">
               {{ trade.shares > 0 ? 'Paid' : 'Received' }}
-              {{ Math.abs(trade.cost).toFixed(2) }} coins
+              {{ Math.abs(trade.cost).toFixed(2) }} dollars
             </v-list-item-subtitle>
           </v-list-item>
         </v-list>

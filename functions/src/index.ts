@@ -37,7 +37,7 @@ export const createMarket = onCall(async (request) => {
     name: name.trim(),
     ownerId: uid,
     inviteCode,
-    defaultBalance: 1000,
+    defaultBalance: 0,
     liquidityParam: 100,
     createdAt: FieldValue.serverTimestamp(),
   })
@@ -45,7 +45,7 @@ export const createMarket = onCall(async (request) => {
     userId: uid,
     displayName: request.auth?.token.name || request.auth?.token.email || 'Anonymous',
     photoURL: request.auth?.token.picture || null,
-    balance: 1000,
+    balance: 0,
     joinedAt: FieldValue.serverTimestamp(),
   })
 
@@ -247,14 +247,6 @@ export const executeTrade = onCall(async (request) => {
 
     // Calculate cost via LMSR
     const cost = calcCost(sharesSold, outcomeIndex, shares, b)
-
-    // For buys, verify user has enough balance
-    if (cost > 0 && member.balance < cost) {
-      throw new HttpsError(
-        'failed-precondition',
-        `Insufficient balance. Cost: ${cost.toFixed(2)}, balance: ${member.balance.toFixed(2)}`,
-      )
-    }
 
     // Update bet sharesSold
     const newSharesSold = [...sharesSold]

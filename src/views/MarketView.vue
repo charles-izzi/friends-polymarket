@@ -35,10 +35,17 @@ async function handleLogout() {
     <v-card class="mb-6">
       <v-card-title class="text-h6">Your Balance</v-card-title>
       <v-card-text>
-        <span class="text-h3 text-primary">
-          {{ marketStore.currentMember?.balance?.toLocaleString() ?? 0 }}
+        <span
+          class="text-h3"
+          :class="(marketStore.currentMember?.balance ?? 0) < 0 ? 'text-error' : 'text-primary'"
+        >
+          ${{
+            marketStore.currentMember?.balance?.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }) ?? '0.00'
+          }}
         </span>
-        <span class="text-body-1 ml-1">coins</span>
       </v-card-text>
     </v-card>
 
@@ -60,7 +67,7 @@ async function handleLogout() {
           v-for="member in marketStore.members"
           :key="member.userId"
           :title="member.displayName"
-          :subtitle="`${member.balance.toLocaleString()} coins`"
+          :subtitle="`$${member.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`"
         >
           <template #prepend>
             <v-avatar color="primary" size="36">
