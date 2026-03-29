@@ -31,6 +31,7 @@ export interface Bet {
   createdAt: Timestamp
   liquidityParam: number
   sharesSold: number[]
+  totalVolume: number
 }
 
 export interface Position {

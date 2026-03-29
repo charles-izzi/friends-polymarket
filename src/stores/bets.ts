@@ -5,7 +5,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions'
 import { db } from '@/firebase'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
-import { calcPrices } from '@/utils/lmsr'
+import { calcPrices, calcEffectiveB } from '@/utils/lmsr'
 import type { Bet, Position, Trade } from '@/types'
 
 export const useBetsStore = defineStore('bets', () => {
@@ -25,7 +25,8 @@ export const useBetsStore = defineStore('bets', () => {
 
   /** Get LMSR prices for a bet */
   function getPrices(bet: Bet): number[] {
-    return calcPrices(bet.sharesSold, bet.liquidityParam)
+    const b = calcEffectiveB(bet.totalVolume ?? 0, bet.liquidityParam)
+    return calcPrices(bet.sharesSold, b)
   }
 
   function listenToBets() {

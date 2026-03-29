@@ -24,7 +24,7 @@ const balanceDisplay = computed(() => {
         <span
           v-if="authStore.isAuthenticated && balanceDisplay !== null"
           class="text-body-2 mr-3"
-          :class="balance! < 0 ? 'text-error' : 'text-white'"
+          :class="balance! < 0 ? 'text-red-lighten-3' : 'text-white'"
         >
           {{ balanceDisplay }}
         </span>

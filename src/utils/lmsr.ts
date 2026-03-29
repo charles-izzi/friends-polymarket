@@ -3,6 +3,18 @@
  * Client-side mirror for display only — never trust for real trades.
  */
 
+const B_MIN = 10
+const VOLUME_THRESHOLD = 200
+
+/**
+ * Adaptive liquidity parameter.
+ * Starts small so early trades move the price cheaply,
+ * grows toward bMax as cumulative volume increases.
+ */
+export function calcEffectiveB(totalVolume: number, bMax: number): number {
+  return B_MIN + (bMax - B_MIN) * Math.min(1, totalVolume / VOLUME_THRESHOLD)
+}
+
 /**
  * Calculate the price (implied probability) of each outcome.
  * price_i = e^(q_i / b) / Σ_j e^(q_j / b)

@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useBetsStore } from '@/stores/bets'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
-import { calcCost } from '@/utils/lmsr'
+import { calcCost, calcEffectiveB } from '@/utils/lmsr'
 import type { Bet } from '@/types'
 
 const route = useRoute()
@@ -40,7 +40,8 @@ const canTrade = computed(() => {
 const estimatedCost = computed(() => {
   if (!bet.value || shareAmount.value <= 0) return 0
   const shares = tradeMode.value === 'sell' ? -shareAmount.value : shareAmount.value
-  return calcCost(bet.value.sharesSold, selectedOutcome.value, shares, bet.value.liquidityParam)
+  const b = calcEffectiveB(bet.value.totalVolume ?? 0, bet.value.liquidityParam)
+  return calcCost(bet.value.sharesSold, selectedOutcome.value, shares, b)
 })
 
 const maxSellShares = computed(() => {

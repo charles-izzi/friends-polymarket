@@ -3,7 +3,7 @@ import { onCall, HttpsError } from 'firebase-functions/https'
 import { initializeApp } from 'firebase-admin/app'
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore'
 import * as crypto from 'crypto'
-import { calcCost, calcPrices } from './lmsr'
+import { calcCost, calcPrices, calcEffectiveB } from './lmsr'
 
 initializeApp()
 const db = getFirestore(process.env.FIRESTORE_DATABASE || 'staging')
@@ -163,6 +163,7 @@ export const createBet = onCall(async (request) => {
     createdAt: FieldValue.serverTimestamp(),
     liquidityParam,
     sharesSold: new Array(outcomes.length).fill(0),
+    totalVolume: 0,
   })
 
   return { betId: betRef.id }
@@ -227,7 +228,9 @@ export const executeTrade = onCall(async (request) => {
     }
 
     const sharesSold: number[] = bet.sharesSold
-    const b: number = bet.liquidityParam
+    const totalVolume: number = bet.totalVolume ?? 0
+    const bMax: number = bet.liquidityParam
+    const b = calcEffectiveB(totalVolume, bMax)
 
     // Get current position
     const position = positionSnap.exists
@@ -248,10 +251,11 @@ export const executeTrade = onCall(async (request) => {
     // Calculate cost via LMSR
     const cost = calcCost(sharesSold, outcomeIndex, shares, b)
 
-    // Update bet sharesSold
+    // Update bet sharesSold and totalVolume
     const newSharesSold = [...sharesSold]
     newSharesSold[outcomeIndex] = (newSharesSold[outcomeIndex] ?? 0) + shares
-    txn.update(betRef, { sharesSold: newSharesSold })
+    const newTotalVolume = totalVolume + Math.abs(shares)
+    txn.update(betRef, { sharesSold: newSharesSold, totalVolume: newTotalVolume })
 
     // Update member balance
     txn.update(memberRef, { balance: member.balance - cost })
@@ -265,8 +269,9 @@ export const executeTrade = onCall(async (request) => {
       totalCost: position.totalCost + cost,
     })
 
-    // Record trade
-    const priceAfter = calcPrices(newSharesSold, b)
+    // Record trade — compute priceAfter with the NEW effective b
+    const bAfter = calcEffectiveB(newTotalVolume, bMax)
+    const priceAfter = calcPrices(newSharesSold, bAfter)
     const tradeRef = betRef.collection('trades').doc()
     txn.set(tradeRef, {
       userId: uid,
