@@ -31,6 +31,11 @@ const router = createRouter({
       component: () => import('@/views/BetDetailView.vue'),
     },
     {
+      path: '/invite/:code',
+      name: 'invite',
+      component: () => import('@/views/MarketView.vue'),
+    },
+    {
       path: '/login',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),
@@ -60,6 +65,19 @@ router.beforeEach(async (to) => {
     const marketStore = useMarketStore()
     if (marketStore.loading) {
       await marketStore.loadUserMarket()
+    }
+
+    // Handle invite link: auto-join then redirect to market
+    if (to.name === 'invite') {
+      if (!marketStore.hasMarket) {
+        try {
+          await marketStore.joinMarket(to.params.code as string)
+          return { path: '/' }
+        } catch {
+          return { name: 'join' }
+        }
+      }
+      return { path: '/' }
     }
 
     // Redirect to /join if user has no market (unless already going there)
