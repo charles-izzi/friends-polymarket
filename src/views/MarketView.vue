@@ -1,35 +1,22 @@
 <script setup lang="ts">
-import { useAuthStore } from '@/stores/auth'
 import { useMarketStore } from '@/stores/market'
 import { useRouter } from 'vue-router'
 import { computed } from 'vue'
 
-const authStore = useAuthStore()
 const marketStore = useMarketStore()
 const router = useRouter()
 
 const inviteCode = computed(() => marketStore.market?.inviteCode ?? '')
-
-async function handleLogout() {
-  marketStore.cleanup()
-  await authStore.logout()
-  router.replace('/login')
-}
 </script>
 
 <template>
   <v-container>
-    <div class="d-flex align-center justify-space-between mb-6">
-      <div>
-        <h1 class="text-h4">{{ marketStore.market?.name }}</h1>
-        <p class="text-body-2 text-medium-emphasis mt-1">
-          Invite code:
-          <code class="text-primary">{{ inviteCode }}</code>
-        </p>
-      </div>
-      <v-btn color="primary" variant="outlined" size="small" @click="handleLogout">
-        Sign Out
-      </v-btn>
+    <div class="mb-6">
+      <h1 class="text-h4">{{ marketStore.market?.name }}</h1>
+      <p class="text-body-2 text-medium-emphasis mt-1">
+        Invite code:
+        <code class="text-primary">{{ inviteCode }}</code>
+      </p>
     </div>
 
     <v-card class="mb-6">

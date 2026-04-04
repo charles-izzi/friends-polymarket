@@ -130,6 +130,7 @@ export const useMarketStore = defineStore('market', () => {
     unsubMembers = null
     market.value = null
     members.value = []
+    loading.value = true
   }
 
   return {

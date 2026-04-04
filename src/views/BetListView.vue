@@ -60,7 +60,10 @@ function statusColor(bet: Bet): string {
 <template>
   <v-container>
     <div class="d-flex align-center justify-space-between mb-4">
-      <h1 class="text-h5">Bets</h1>
+      <div class="d-flex align-center ga-2">
+        <v-btn icon="mdi-arrow-left" variant="text" @click="router.push('/')" />
+        <h1 class="text-h5">Bets</h1>
+      </div>
       <v-btn color="primary" prepend-icon="mdi-plus" @click="router.push('/bets/create')">
         New Bet
       </v-btn>
