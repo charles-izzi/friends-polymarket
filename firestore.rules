@@ -40,8 +40,8 @@ service cloud.firestore {
     // CollectionGroup rule for 'members' — allows the collectionGroup query
     // used to find which market a user belongs to. Only lets a user read
     // their own member document across all markets.
-    match /{path=**}/members/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
+    match /{path=**}/members/{memberId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
     }
   }
 }

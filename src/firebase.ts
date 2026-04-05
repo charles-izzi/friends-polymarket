@@ -19,4 +19,4 @@ export const dbName = useDevDb ? 'staging' : '(default)'
 
 const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
-export const db = getFirestore(app, dbName)
+export const db = useDevDb ? getFirestore(app, 'staging') : getFirestore(app)
