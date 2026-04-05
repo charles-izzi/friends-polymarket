@@ -2,10 +2,12 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBetsStore } from '@/stores/bets'
+import { useAuthStore } from '@/stores/auth'
 import type { Bet } from '@/types'
 
 const router = useRouter()
 const betsStore = useBetsStore()
+const authStore = useAuthStore()
 
 onMounted(() => {
   betsStore.listenToBets()
@@ -28,21 +30,26 @@ function topOutcome(bet: Bet): { label: string; pct: string } {
   }
 }
 
+function effectiveStatus(bet: Bet): string {
+  if (bet.status !== 'open') return bet.status
+  if (bet.closesAt.toDate().getTime() <= Date.now()) return 'closed'
+  return 'open'
+}
+
 function timeRemaining(bet: Bet): string {
-  const closes = bet.closesAt.toDate()
-  const now = new Date()
-  if (closes <= now) return 'Closed'
-  const diff = closes.getTime() - now.getTime()
-  const hours = Math.floor(diff / 3600000)
-  const days = Math.floor(hours / 24)
-  if (days > 0) return `${days}d ${hours % 24}h left`
-  if (hours > 0) return `${hours}h left`
-  const mins = Math.floor(diff / 60000)
-  return `${mins}m left`
+  if (effectiveStatus(bet) !== 'open') return ''
+  const diff = bet.closesAt.toDate().getTime() - Date.now()
+  if (diff <= 0) return ''
+  const days = Math.floor(diff / 86400000)
+  const hours = Math.floor((diff % 86400000) / 3600000)
+  const minutes = Math.floor((diff % 3600000) / 60000)
+  if (days > 0) return `${days}d ${hours}h ${minutes}m left`
+  if (hours > 0) return `${hours}h ${minutes}m left`
+  return `${minutes}m left`
 }
 
 function statusColor(bet: Bet): string {
-  switch (bet.status) {
+  switch (effectiveStatus(bet)) {
     case 'open':
       return 'success'
     case 'closed':
@@ -89,14 +96,22 @@ function statusColor(bet: Bet): string {
       <v-card-text>
         <div class="d-flex align-center justify-space-between mb-2">
           <v-chip :color="statusColor(bet)" size="small" variant="tonal">
-            {{ bet.status }}
+            {{ effectiveStatus(bet) }}
           </v-chip>
           <span class="text-caption text-medium-emphasis">
-            <template v-if="bet.status === 'open'">{{ timeRemaining(bet) }}</template>
-            <template v-else-if="bet.status === 'resolved' && bet.resolvedOutcome !== null">
+            <template v-if="effectiveStatus(bet) === 'open'">{{ timeRemaining(bet) }}</template>
+            <template
+              v-else-if="effectiveStatus(bet) === 'resolved' && bet.resolvedOutcome !== null"
+            >
               Winner: {{ bet.outcomes[bet.resolvedOutcome] }}
             </template>
-            <template v-else-if="bet.status === 'cancelled'">Refunded</template>
+            <template v-else-if="effectiveStatus(bet) === 'cancelled'">Refunded</template>
+            <template
+              v-else-if="effectiveStatus(bet) === 'closed' && bet.createdBy === authStore.user?.uid"
+            >
+              <v-icon icon="mdi-alert-circle" size="x-small" color="warning" class="mr-1" />
+              Needs resolution
+            </template>
           </span>
         </div>
 

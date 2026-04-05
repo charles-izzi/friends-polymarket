@@ -47,7 +47,7 @@ function onTypeChange(newType: 'binary' | 'multiple_choice') {
   if (newType === 'binary') {
     outcomes.value = ['Yes', 'No']
   } else {
-    outcomes.value = ['Option 1', 'Option 2']
+    outcomes.value = []
   }
 }
 

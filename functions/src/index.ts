@@ -186,6 +186,9 @@ export const executeTrade = onCall(async (request) => {
   if (typeof outcomeIndex !== 'number' || typeof shares !== 'number' || shares === 0) {
     throw new HttpsError('invalid-argument', 'Valid outcome index and non-zero shares required')
   }
+  if (!Number.isInteger(shares)) {
+    throw new HttpsError('invalid-argument', 'Shares must be a whole number')
+  }
 
   const marketRef = db.collection('markets').doc(marketId)
   const betRef = marketRef.collection('bets').doc(betId)
@@ -244,6 +247,17 @@ export const executeTrade = onCall(async (request) => {
         throw new HttpsError(
           'failed-precondition',
           `Insufficient shares. You have ${currentShares}, trying to sell ${Math.abs(shares)}`,
+        )
+      }
+    }
+
+    // For buys, enforce 100 shares per outcome cap
+    if (shares > 0) {
+      const currentShares = position.shares[outcomeIndex] ?? 0
+      if (currentShares + shares > 100) {
+        throw new HttpsError(
+          'failed-precondition',
+          `Exceeds 100-share limit. You have ${currentShares}, trying to buy ${shares}`,
         )
       }
     }
