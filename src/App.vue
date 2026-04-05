@@ -3,6 +3,7 @@ import { RouterView, useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 import { computed, ref } from 'vue'
+import { useDevDb } from '@/firebase'
 
 const authStore = useAuthStore()
 const marketStore = useMarketStore()
@@ -10,6 +11,12 @@ const router = useRouter()
 
 const drawer = ref(false)
 const userMenu = ref(false)
+const devDb = ref(useDevDb)
+
+function toggleDevDb() {
+  localStorage.setItem('useDevDb', String(devDb.value))
+  window.location.reload()
+}
 
 async function handleLogout() {
   marketStore.cleanup()
@@ -80,6 +87,20 @@ const balanceDisplay = computed(() => {
           @click="drawer = false"
         />
       </v-list>
+
+      <template #append>
+        <v-divider />
+        <div class="d-flex align-center justify-space-between px-4 py-2">
+          <span class="text-body-2">Use Dev DB</span>
+          <v-switch
+            v-model="devDb"
+            color="warning"
+            density="compact"
+            hide-details
+            @change="toggleDevDb"
+          />
+        </div>
+      </template>
     </v-navigation-drawer>
 
     <v-main>

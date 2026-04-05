@@ -11,6 +11,12 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
+const stored = localStorage.getItem('useDevDb')
+const envDb = import.meta.env.VITE_FIRESTORE_DATABASE ?? '(default)'
+export const useDevDb = stored !== null ? stored === 'true' : envDb !== '(default)'
+
+export const dbName = useDevDb ? 'staging' : '(default)'
+
 const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
-export const db = getFirestore(app, import.meta.env.VITE_FIRESTORE_DATABASE ?? '(default)')
+export const db = getFirestore(app, dbName)

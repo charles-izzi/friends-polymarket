@@ -6,7 +6,14 @@ import * as crypto from 'crypto'
 import { calcCost, calcPrices, calcEffectiveB } from './lmsr'
 
 initializeApp()
-const db = getFirestore(process.env.FIRESTORE_DATABASE || 'staging')
+
+const ALLOWED_DBS = new Set(['staging', '(default)'])
+const defaultDb = process.env.FIRESTORE_DATABASE || 'staging'
+
+function getDb(database?: string) {
+  const name = database && ALLOWED_DBS.has(database) ? database : defaultDb
+  return getFirestore(name)
+}
 
 setGlobalOptions({ maxInstances: 10 })
 
@@ -18,7 +25,8 @@ export const createMarket = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { name } = request.data as { name: string }
+  const { name, database } = request.data as { name: string; database?: string }
+  const db = getDb(database)
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     throw new HttpsError('invalid-argument', 'Market name is required')
   }
@@ -57,7 +65,8 @@ export const joinMarket = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { inviteCode } = request.data as { inviteCode: string }
+  const { inviteCode, database } = request.data as { inviteCode: string; database?: string }
+  const db = getDb(database)
   if (!inviteCode || typeof inviteCode !== 'string') {
     throw new HttpsError('invalid-argument', 'Invite code is required')
   }
@@ -99,14 +108,17 @@ export const createBet = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { marketId, question, type, outcomes, excludedMembers, closesAt } = request.data as {
-    marketId: string
-    question: string
-    type: 'binary' | 'multiple_choice'
-    outcomes: string[]
-    excludedMembers: string[]
-    closesAt: string // ISO string from client
-  }
+  const { marketId, question, type, outcomes, excludedMembers, closesAt, database } =
+    request.data as {
+      marketId: string
+      question: string
+      type: 'binary' | 'multiple_choice'
+      outcomes: string[]
+      excludedMembers: string[]
+      closesAt: string
+      database?: string
+    }
+  const db = getDb(database)
 
   // Validate inputs
   if (!marketId || !question?.trim()) {
@@ -173,12 +185,14 @@ export const executeTrade = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { marketId, betId, outcomeIndex, shares } = request.data as {
+  const { marketId, betId, outcomeIndex, shares, database } = request.data as {
     marketId: string
     betId: string
     outcomeIndex: number
-    shares: number // positive = buy, negative = sell
+    shares: number
+    database?: string
   }
+  const db = getDb(database)
 
   if (!marketId || !betId) {
     throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')
@@ -311,11 +325,13 @@ export const resolveBet = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { marketId, betId, outcomeIndex } = request.data as {
+  const { marketId, betId, outcomeIndex, database } = request.data as {
     marketId: string
     betId: string
     outcomeIndex: number
+    database?: string
   }
+  const db = getDb(database)
 
   if (!marketId || !betId || typeof outcomeIndex !== 'number') {
     throw new HttpsError('invalid-argument', 'Market ID, bet ID, and outcome index are required')
@@ -388,10 +404,12 @@ export const cancelBet = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { marketId, betId } = request.data as {
+  const { marketId, betId, database } = request.data as {
     marketId: string
     betId: string
+    database?: string
   }
+  const db = getDb(database)
 
   if (!marketId || !betId) {
     throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')

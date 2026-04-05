@@ -10,7 +10,7 @@ import {
   limit,
 } from 'firebase/firestore'
 import { getFunctions, httpsCallable } from 'firebase/functions'
-import { db } from '@/firebase'
+import { db, dbName } from '@/firebase'
 import { useAuthStore } from '@/stores/auth'
 import type { Market, Member } from '@/types'
 
@@ -96,11 +96,11 @@ export const useMarketStore = defineStore('market', () => {
   async function createMarket(name: string) {
     error.value = ''
     try {
-      const fn = httpsCallable<{ name: string }, { marketId: string; inviteCode: string }>(
-        functions,
-        'createMarket',
-      )
-      await fn({ name })
+      const fn = httpsCallable<
+        { name: string; database: string },
+        { marketId: string; inviteCode: string }
+      >(functions, 'createMarket')
+      await fn({ name, database: dbName })
       await loadUserMarket()
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to create market'
@@ -111,11 +111,11 @@ export const useMarketStore = defineStore('market', () => {
   async function joinMarket(inviteCode: string) {
     error.value = ''
     try {
-      const fn = httpsCallable<{ inviteCode: string }, { marketId: string }>(
+      const fn = httpsCallable<{ inviteCode: string; database: string }, { marketId: string }>(
         functions,
         'joinMarket',
       )
-      await fn({ inviteCode })
+      await fn({ inviteCode, database: dbName })
       await loadUserMarket()
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to join market'

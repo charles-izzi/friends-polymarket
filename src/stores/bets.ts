@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { collection, doc, onSnapshot, orderBy, query } from 'firebase/firestore'
 import { getFunctions, httpsCallable } from 'firebase/functions'
-import { db } from '@/firebase'
+import { db, dbName } from '@/firebase'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 import { calcPrices, calcEffectiveB } from '@/utils/lmsr'
@@ -65,6 +65,7 @@ export const useBetsStore = defineStore('bets', () => {
           outcomes: string[]
           excludedMembers: string[]
           closesAt: string
+          database: string
         },
         { betId: string }
       >(functions, 'createBet')
@@ -72,6 +73,7 @@ export const useBetsStore = defineStore('bets', () => {
       const result = await fn({
         marketId: marketStore.market.id,
         ...data,
+        database: dbName,
       })
       return result.data.betId
     } catch (e: unknown) {
@@ -121,13 +123,14 @@ export const useBetsStore = defineStore('bets', () => {
     error.value = ''
     try {
       const fn = httpsCallable<
-        { marketId: string; betId: string; outcomeIndex: number; shares: number },
+        { marketId: string; betId: string; outcomeIndex: number; shares: number; database: string },
         { tradeId: string; cost: number; newBalance: number; priceAfter: number[] }
       >(functions, 'executeTrade')
 
       const result = await fn({
         marketId: marketStore.market.id,
         ...data,
+        database: dbName,
       })
       return result.data
     } catch (e: unknown) {
@@ -155,7 +158,7 @@ export const useBetsStore = defineStore('bets', () => {
     error.value = ''
     try {
       const fn = httpsCallable<
-        { marketId: string; betId: string; outcomeIndex: number },
+        { marketId: string; betId: string; outcomeIndex: number; database: string },
         { success: boolean }
       >(functions, 'resolveBet')
 
@@ -163,6 +166,7 @@ export const useBetsStore = defineStore('bets', () => {
         marketId: marketStore.market.id,
         betId,
         outcomeIndex,
+        database: dbName,
       })
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to resolve bet'
@@ -176,14 +180,15 @@ export const useBetsStore = defineStore('bets', () => {
 
     error.value = ''
     try {
-      const fn = httpsCallable<{ marketId: string; betId: string }, { success: boolean }>(
-        functions,
-        'cancelBet',
-      )
+      const fn = httpsCallable<
+        { marketId: string; betId: string; database: string },
+        { success: boolean }
+      >(functions, 'cancelBet')
 
       await fn({
         marketId: marketStore.market.id,
         betId,
+        database: dbName,
       })
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to cancel bet'
