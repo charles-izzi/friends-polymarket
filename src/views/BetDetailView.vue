@@ -203,8 +203,7 @@ const OUTCOME_COLORS = [
 ]
 
 function getOutcomeColor(index: number): string {
-  return OUTCOME_COLORS[index % OUTCOME_COLORS.length]
-  return fallbacks[index % fallbacks.length]
+  return OUTCOME_COLORS[index % OUTCOME_COLORS.length]!
 }
 
 interface ChartPoint {
@@ -222,7 +221,7 @@ const chartPoints = computed<ChartPoint[]>(() => {
   // Trades are stored DESC — iterate in reverse for chronological order
   const trades = betsStore.trades
   for (let t = trades.length - 1; t >= 0; t--) {
-    const trade = trades[t]
+    const trade = trades[t]!
     points.push({ prices: trade.priceAfter.slice(0, n) })
   }
   return points

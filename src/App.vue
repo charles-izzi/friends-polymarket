@@ -28,14 +28,16 @@ const balanceDisplay = computed(() => {
   <v-app>
     <v-app-bar density="compact" color="primary">
       <v-app-bar-nav-icon v-if="authStore.isAuthenticated" @click="drawer = !drawer" />
-      <v-app-bar-title>
-        <router-link to="/" class="text-white text-decoration-none">Friends Polymarket</router-link>
+      <v-app-bar-title style="margin-left: 0">
+        <router-link to="/" class="text-decoration-none" style="color: #4a4a4a"
+          >Polymarket with Friends</router-link
+        >
       </v-app-bar-title>
       <template #append>
         <span
           v-if="authStore.isAuthenticated && balanceDisplay !== null"
           class="text-body-2 mr-3"
-          :class="balance! < 0 ? 'text-red-lighten-3' : 'text-white'"
+          :class="balance! < 0 ? 'text-error' : 'text-white'"
         >
           {{ balanceDisplay }}
         </span>
