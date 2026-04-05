@@ -12,7 +12,7 @@ const defaultDb = process.env.FIRESTORE_DATABASE || '(default)'
 
 function getDb(database?: string) {
   const name = database && ALLOWED_DBS.has(database) ? database : defaultDb
-  return getFirestore(name)
+  return name === '(default)' ? getFirestore() : getFirestore(name)
 }
 
 setGlobalOptions({ maxInstances: 10 })
