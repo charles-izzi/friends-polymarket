@@ -12,8 +12,8 @@ async function handleLogout() {
 </script>
 
 <template>
-  <v-container>
-    <h1 class="text-h4 mb-4">You did it!</h1>
+  <v-container class="pt-0">
+    <h1 class="text-h6 mb-0">You did it!</h1>
     <p class="text-body-1 mb-2">
       Visit <a href="https://vuejs.org/" target="_blank" rel="noopener">vuejs.org</a> to read the
       documentation

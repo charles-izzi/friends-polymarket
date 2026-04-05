@@ -35,7 +35,7 @@ async function handleGoogleSignIn() {
 <template>
   <v-container class="fill-height d-flex align-center justify-center">
     <v-card max-width="400" width="100%" class="pa-4">
-      <v-card-title class="text-h5 text-center">
+      <v-card-title class="text-h6 text-center">
         {{ isRegistering ? 'Create Account' : 'Sign In' }}
       </v-card-title>
 

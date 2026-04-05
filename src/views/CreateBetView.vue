@@ -69,10 +69,10 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <v-container max-width="600">
-    <div class="d-flex align-center mb-4">
+  <v-container max-width="600" class="pt-0">
+    <div class="d-flex align-center mb-0">
       <v-btn icon="mdi-arrow-left" variant="text" @click="router.back()" />
-      <h1 class="text-h5 ml-2">Create a Bet</h1>
+      <h1 class="text-h6 ml-2">Create a Bet</h1>
     </div>
 
     <v-form @submit.prevent="handleSubmit">

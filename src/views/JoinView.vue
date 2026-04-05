@@ -35,7 +35,7 @@ async function handleCreate() {
 <template>
   <v-container class="fill-height d-flex align-center justify-center">
     <v-card max-width="450" width="100%" class="pa-4">
-      <v-card-title class="text-h5 text-center mb-2">Get Started</v-card-title>
+      <v-card-title class="text-h6 text-center mb-1">Get Started</v-card-title>
 
       <v-tabs v-model="tab" grow class="mb-4">
         <v-tab value="join">Join Market</v-tab>

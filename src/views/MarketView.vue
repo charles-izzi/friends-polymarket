@@ -65,9 +65,9 @@ function statusColor(bet: Bet): string {
 </script>
 
 <template>
-  <v-container>
-    <div class="d-flex align-center mb-6">
-      <h1 class="text-h4 flex-grow-1">{{ marketStore.market?.name }}</h1>
+  <v-container class="pt-0">
+    <div class="d-flex align-center mb-0">
+      <h1 class="text-h6 flex-grow-1">{{ marketStore.market?.name }}</h1>
       <v-btn
         :icon="copied ? 'mdi-check' : 'mdi-account-plus'"
         :color="copied ? 'success' : 'primary'"
@@ -121,8 +121,7 @@ function statusColor(bet: Bet): string {
       <v-card-text v-else class="text-center text-medium-emphasis py-4"> No bets yet </v-card-text>
     </v-card>
 
-    <v-card>
-      <v-card-title class="text-h6"> Members ({{ marketStore.members.length }}) </v-card-title>
+    <v-card variant="flat">
       <v-list>
         <v-list-item
           v-for="member in marketStore.members"

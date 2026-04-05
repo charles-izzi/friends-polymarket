@@ -9,6 +9,19 @@ const router = useRouter()
 const betsStore = useBetsStore()
 const authStore = useAuthStore()
 
+const OUTCOME_COLORS = [
+  '#5b8fa8',
+  '#c47a6a',
+  '#b5944f',
+  '#7a9a6d',
+  '#9b7db8',
+  '#6a8f6d',
+  '#a87b5b',
+  '#7b8fb8',
+  '#b85b7d',
+  '#5ba8a0',
+]
+
 onMounted(() => {
   betsStore.listenToBets()
 })
@@ -65,11 +78,11 @@ function statusColor(bet: Bet): string {
 </script>
 
 <template>
-  <v-container>
-    <div class="d-flex align-center justify-space-between mb-4">
+  <v-container class="pt-0">
+    <div class="d-flex align-center justify-space-between mb-0">
       <div class="d-flex align-center ga-2">
         <v-btn icon="mdi-arrow-left" variant="text" @click="router.push('/')" />
-        <h1 class="text-h5">Bets</h1>
+        <h1 class="text-h6">Bets</h1>
       </div>
       <v-btn color="primary" prepend-icon="mdi-plus" @click="router.push('/bets/create')">
         New Bet
@@ -115,29 +128,48 @@ function statusColor(bet: Bet): string {
           </span>
         </div>
 
-        <p class="text-subtitle-1 font-weight-medium mb-3">{{ bet.question }}</p>
+        <p class="text-subtitle-1 font-weight-medium mb-2">{{ bet.question }}</p>
 
-        <div class="d-flex flex-wrap ga-2">
-          <v-chip
+        <div
+          :style="{
+            height: '20px',
+            borderRadius: '4px',
+            overflow: 'hidden',
+            display: 'flex',
+          }"
+        >
+          <div
             v-for="(outcome, i) in bet.outcomes"
             :key="i"
-            :color="i === 0 ? 'primary' : 'default'"
-            variant="tonal"
-            size="small"
+            :style="{
+              width: (betsStore.getPrices(bet)[i] ?? 0) * 100 + '%',
+              backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }"
           >
-            {{ outcome }}
-            <span class="ml-1 font-weight-bold">{{ getPriceLabel(bet, i) }}</span>
-          </v-chip>
+            <span
+              v-if="(betsStore.getPrices(bet)[i] ?? 0) >= 0.1"
+              class="text-caption font-weight-bold"
+              style="color: white; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); font-size: 11px"
+            >
+              {{ getPriceLabel(bet, i) }}
+            </span>
+          </div>
         </div>
-
-        <div v-if="bet.outcomes.length === 2" class="mt-3">
-          <v-progress-linear
-            :model-value="(betsStore.getPrices(bet)[0] ?? 0) * 100"
-            color="primary"
-            bg-color="grey-lighten-2"
-            height="8"
-            rounded
-          />
+        <div class="d-flex flex-wrap ga-2 mt-1">
+          <div v-for="(outcome, i) in bet.outcomes" :key="i" class="d-flex align-center ga-1">
+            <div
+              :style="{
+                width: '10px',
+                height: '10px',
+                borderRadius: '2px',
+                backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+              }"
+            />
+            <span class="text-caption">{{ outcome }}</span>
+          </div>
         </div>
       </v-card-text>
     </v-card>

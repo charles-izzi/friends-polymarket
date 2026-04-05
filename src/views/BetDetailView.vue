@@ -23,6 +23,7 @@ const resolveOutcome = ref(0)
 const showResolveDialog = ref(false)
 const showCancelDialog = ref(false)
 const resolving = ref(false)
+const detailTab = ref('chart')
 
 const now = ref(Date.now())
 let nowInterval: ReturnType<typeof setInterval> | null = null
@@ -189,14 +190,20 @@ async function handleCancel() {
 // --- Chart ---
 const chartRef = ref<SVGSVGElement | null>(null)
 
+const OUTCOME_COLORS = [
+  '#5b8fa8',
+  '#c47a6a',
+  '#b5944f',
+  '#7a9a6d',
+  '#9b7db8',
+  '#6a8f6d',
+  '#7b8fb8',
+  '#b85b7d',
+  '#5ba8a0',
+]
+
 function getOutcomeColor(index: number): string {
-  const fallbacks = ['#6200ea', '#ef5350', '#ff9800', '#26a69a', '#ab47bc']
-  if (!chartRef.value) return fallbacks[index % fallbacks.length]
-  const vars = ['--v-theme-primary', '--v-theme-error', '--v-theme-warning']
-  if (index < vars.length) {
-    const raw = getComputedStyle(chartRef.value).getPropertyValue(vars[index]).trim()
-    if (raw && /^\d/.test(raw)) return `rgb(${raw})`
-  }
+  return OUTCOME_COLORS[index % OUTCOME_COLORS.length]
   return fallbacks[index % fallbacks.length]
 }
 
@@ -329,10 +336,38 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <v-container max-width="700">
-    <div class="d-flex align-center mb-2">
+  <v-container max-width="700" class="pt-0">
+    <div class="d-flex align-center mb-0">
       <v-btn icon="mdi-arrow-left" variant="text" @click="router.push('/bets')" />
-      <h1 class="text-h5 ml-2">Bet Detail</h1>
+      <h1 class="text-h6 ml-2 flex-grow-1">Bet Detail</h1>
+      <template
+        v-if="isCreator && bet && (effectiveStatus === 'open' || effectiveStatus === 'closed')"
+      >
+        <v-btn
+          icon="mdi-gavel"
+          color="primary"
+          variant="tonal"
+          size="small"
+          :class="['ml-1', { 'pulse-shadow': effectiveStatus === 'closed' }]"
+          @click="showResolveDialog = true"
+        >
+          <v-icon>mdi-gavel</v-icon>
+          <v-tooltip activator="parent" location="bottom">
+            {{ effectiveStatus === 'closed' ? 'Betting closed — Resolve now!' : 'Resolve Bet' }}
+          </v-tooltip>
+        </v-btn>
+        <v-btn
+          icon="mdi-cancel"
+          color="error"
+          variant="tonal"
+          size="small"
+          class="ml-1"
+          @click="showCancelDialog = true"
+        >
+          <v-icon>mdi-cancel</v-icon>
+          <v-tooltip activator="parent" location="bottom">Cancel Bet</v-tooltip>
+        </v-btn>
+      </template>
     </div>
 
     <template v-if="!bet">
@@ -341,14 +376,14 @@ onUnmounted(() => {
 
     <template v-else>
       <!-- Question + status row -->
-      <div class="d-flex align-start ga-4 mb-4">
+      <div class="d-flex align-center ga-4 mb-2" style="margin-top: -4px">
         <div class="flex-grow-1">
           <p class="text-h6 font-weight-medium">{{ bet.question }}</p>
-          <v-chip v-if="isExcluded" color="error" size="small" variant="tonal" class="mt-2">
+          <v-chip v-if="isExcluded" color="error" size="small" variant="tonal" class="mt-1">
             You are excluded
           </v-chip>
         </div>
-        <div class="d-flex flex-column align-end ga-1 flex-shrink-0">
+        <div class="d-flex flex-column align-end justify-center ga-1 flex-shrink-0">
           <v-chip
             :color="
               effectiveStatus === 'open'
@@ -378,10 +413,41 @@ onUnmounted(() => {
         class="mb-4"
       >
         <strong>Resolved:</strong> "{{ bet.outcomes[bet.resolvedOutcome] }}" won!
-        <span v-if="position && (position.shares[bet.resolvedOutcome] ?? 0) > 0">
-          You won
-          <strong>{{ (position.shares[bet.resolvedOutcome] ?? 0).toFixed(2) }}</strong> dollars!
-        </span>
+        <table
+          v-if="position && position.totalCost > 0"
+          class="text-body-2 mt-2"
+          style="border-collapse: collapse"
+        >
+          <tbody>
+            <tr>
+              <td class="pr-4 text-medium-emphasis">Cost</td>
+              <td class="text-right">${{ position.totalCost.toFixed(2) }}</td>
+            </tr>
+            <tr>
+              <td class="pr-4 text-medium-emphasis">Payout</td>
+              <td class="text-right">
+                ${{ (position.shares[bet.resolvedOutcome] ?? 0).toFixed(2) }}
+              </td>
+            </tr>
+            <tr>
+              <td class="pr-4 text-medium-emphasis font-weight-bold">Profit</td>
+              <td
+                class="text-right font-weight-bold"
+                :class="
+                  (position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost >= 0
+                    ? 'text-success'
+                    : 'text-error'
+                "
+              >
+                {{
+                  (position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost >= 0 ? '+' : ''
+                }}${{
+                  ((position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost).toFixed(2)
+                }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </v-alert>
 
       <!-- Cancelled banner -->
@@ -389,98 +455,152 @@ onUnmounted(() => {
         This bet was cancelled. All positions have been refunded at cost basis.
       </v-alert>
 
-      <!-- Price History Chart -->
-      <div class="mb-4">
-        <template v-if="chartPoints.length >= 2">
-          <svg
-            ref="chartRef"
-            :viewBox="`0 0 ${SVG_W} ${SVG_H}`"
-            preserveAspectRatio="xMidYMid meet"
-            style="width: 100%; height: auto; display: block"
-            @mousemove="onChartMouseMove"
-            @mouseleave="onChartMouseLeave"
-          >
-            <!-- Y grid lines + labels -->
-            <template v-for="tick in yTicks" :key="tick">
-              <line
-                :x1="PAD.left"
-                :x2="SVG_W - PAD.right"
-                :y1="PAD.top + (1 - tick / 100) * plotH"
-                :y2="PAD.top + (1 - tick / 100) * plotH"
-                stroke="rgba(128,128,128,0.15)"
-                stroke-width="1"
-              />
-              <text
-                :x="PAD.left - 6"
-                :y="PAD.top + (1 - tick / 100) * plotH + 5"
-                text-anchor="end"
-                class="chart-label"
+      <!-- Chart / Trades tabs -->
+      <v-tabs v-model="detailTab" density="compact" class="mb-2">
+        <v-tab value="chart">
+          <v-icon>mdi-chart-line</v-icon>
+        </v-tab>
+        <v-tab value="trades">
+          <v-icon>mdi-swap-horizontal</v-icon>
+        </v-tab>
+      </v-tabs>
+
+      <v-window v-model="detailTab">
+        <v-window-item value="chart">
+          <div class="mb-4">
+            <template v-if="chartPoints.length >= 2">
+              <svg
+                ref="chartRef"
+                :viewBox="`0 0 ${SVG_W} ${SVG_H}`"
+                preserveAspectRatio="xMidYMid meet"
+                style="width: 100%; height: auto; display: block"
+                @mousemove="onChartMouseMove"
+                @mouseleave="onChartMouseLeave"
               >
-                {{ tick }}%
-              </text>
-            </template>
+                <!-- Y grid lines + labels -->
+                <template v-for="tick in yTicks" :key="tick">
+                  <line
+                    :x1="PAD.left"
+                    :x2="SVG_W - PAD.right"
+                    :y1="PAD.top + (1 - tick / 100) * plotH"
+                    :y2="PAD.top + (1 - tick / 100) * plotH"
+                    stroke="rgba(128,128,128,0.15)"
+                    stroke-width="1"
+                  />
+                  <text
+                    :x="PAD.left - 6"
+                    :y="PAD.top + (1 - tick / 100) * plotH + 5"
+                    text-anchor="end"
+                    class="chart-label"
+                  >
+                    {{ tick }}%
+                  </text>
+                </template>
 
-            <!-- X axis labels -->
-            <text
-              v-for="(tick, ti) in xTicks"
-              :key="ti"
-              :x="tick.x"
-              :y="SVG_H - 4"
-              text-anchor="middle"
-              class="chart-label"
-            >
-              {{ tick.label }}
-            </text>
-
-            <!-- Price lines -->
-            <path
-              v-for="(line, li) in svgPaths"
-              :key="li"
-              :d="line.d"
-              :stroke="line.color"
-              stroke-width="2.5"
-              fill="none"
-              stroke-linejoin="round"
-              stroke-linecap="round"
-            />
-
-            <!-- Hover crosshair + dots + price labels -->
-            <template v-if="hoverInfo">
-              <line
-                :x1="hoverInfo.x"
-                :x2="hoverInfo.x"
-                :y1="PAD.top"
-                :y2="PAD.top + plotH"
-                stroke="rgba(128,128,128,0.4)"
-                stroke-width="1"
-                stroke-dasharray="4,3"
-              />
-              <template v-for="(p, pi) in hoverInfo.prices" :key="pi">
-                <circle
-                  :cx="hoverInfo.x"
-                  :cy="PAD.top + (1 - parseFloat(p.pct) / 100) * plotH"
-                  r="4"
-                  :fill="p.color"
-                  stroke="white"
-                  stroke-width="1.5"
-                />
+                <!-- X axis labels -->
                 <text
-                  :x="hoverInfo.x + 7"
-                  :y="PAD.top + (1 - parseFloat(p.pct) / 100) * plotH + 4"
-                  class="chart-hover-label"
-                  :fill="p.color"
+                  v-for="(tick, ti) in xTicks"
+                  :key="ti"
+                  :x="tick.x"
+                  :y="SVG_H - 4"
+                  text-anchor="middle"
+                  class="chart-label"
                 >
-                  {{ p.pct }}%
+                  {{ tick.label }}
                 </text>
-              </template>
-            </template>
-          </svg>
-        </template>
-        <p v-else class="text-body-2 text-medium-emphasis">
-          No trades yet — prices will appear here
-        </p>
-      </div>
 
+                <!-- Price lines -->
+                <path
+                  v-for="(line, li) in svgPaths"
+                  :key="li"
+                  :d="line.d"
+                  :stroke="line.color"
+                  stroke-width="2.5"
+                  fill="none"
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                />
+
+                <!-- Hover crosshair + dots + price labels -->
+                <template v-if="hoverInfo">
+                  <line
+                    :x1="hoverInfo.x"
+                    :x2="hoverInfo.x"
+                    :y1="PAD.top"
+                    :y2="PAD.top + plotH"
+                    stroke="rgba(128,128,128,0.4)"
+                    stroke-width="1"
+                    stroke-dasharray="4,3"
+                  />
+                  <template v-for="(p, pi) in hoverInfo.prices" :key="pi">
+                    <circle
+                      :cx="hoverInfo.x"
+                      :cy="PAD.top + (1 - parseFloat(p.pct) / 100) * plotH"
+                      r="4"
+                      :fill="p.color"
+                      stroke="white"
+                      stroke-width="1.5"
+                    />
+                    <text
+                      :x="hoverInfo.x + 7"
+                      :y="PAD.top + (1 - parseFloat(p.pct) / 100) * plotH + 4"
+                      class="chart-hover-label"
+                      :fill="p.color"
+                    >
+                      {{ p.pct }}%
+                    </text>
+                  </template>
+                </template>
+              </svg>
+            </template>
+            <p v-else class="text-body-2 text-medium-emphasis">
+              No trades yet — prices will appear here
+            </p>
+          </div>
+        </v-window-item>
+
+        <v-window-item value="trades">
+          <table
+            v-if="betsStore.trades.length > 0"
+            class="text-body-2"
+            style="width: 100%; border-collapse: collapse"
+          >
+            <thead>
+              <tr
+                class="text-caption text-medium-emphasis"
+                style="
+                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                "
+              >
+                <th class="text-left py-1">User</th>
+                <th class="text-left py-1">Action</th>
+                <th class="text-right py-1">Shares</th>
+                <th class="text-right py-1">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="trade in betsStore.trades"
+                :key="trade.id"
+                style="
+                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                "
+              >
+                <td class="py-1">{{ memberName(trade.userId) }}</td>
+                <td class="py-1">
+                  <span :class="trade.shares > 0 ? 'text-success' : 'text-error'">
+                    {{ trade.shares > 0 ? 'Buy' : 'Sell' }}
+                  </span>
+                  "{{ bet.outcomes[trade.outcomeIndex] }}"
+                </td>
+                <td class="text-right py-1">{{ Math.abs(trade.shares).toFixed(1) }}</td>
+                <td class="text-right py-1">${{ Math.abs(trade.cost).toFixed(2) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="text-body-2 text-medium-emphasis">No trades yet</p>
+        </v-window-item>
+      </v-window>
       <!-- Outcome prices -->
       <div class="mb-4">
         <div
@@ -498,12 +618,7 @@ onUnmounted(() => {
             :key="i"
             :style="{
               width: (prices[i] ?? 0) * 100 + '%',
-              backgroundColor:
-                i === 0
-                  ? 'rgb(var(--v-theme-primary))'
-                  : i === 1
-                    ? 'rgb(var(--v-theme-error))'
-                    : 'rgb(var(--v-theme-warning))',
+              backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -526,12 +641,7 @@ onUnmounted(() => {
                 width: '12px',
                 height: '12px',
                 borderRadius: '3px',
-                backgroundColor:
-                  i === 0
-                    ? 'rgb(var(--v-theme-primary))'
-                    : i === 1
-                      ? 'rgb(var(--v-theme-error))'
-                      : 'rgb(var(--v-theme-warning))',
+                backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
               }"
             />
             <span class="text-caption">{{ outcome }}</span>
@@ -550,12 +660,7 @@ onUnmounted(() => {
                   width: '10px',
                   height: '10px',
                   borderRadius: '2px',
-                  backgroundColor:
-                    i === 0
-                      ? 'rgb(var(--v-theme-primary))'
-                      : i === 1
-                        ? 'rgb(var(--v-theme-error))'
-                        : 'rgb(var(--v-theme-warning))',
+                  backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
                 }"
               />
               <span class="text-body-2 font-weight-medium">{{ outcome }}</span>
@@ -627,29 +732,6 @@ onUnmounted(() => {
         </v-card-text>
       </v-card>
 
-      <!-- Creator actions: resolve or cancel -->
-      <v-card
-        v-if="isCreator && (effectiveStatus === 'open' || effectiveStatus === 'closed')"
-        class="mb-4"
-        variant="outlined"
-        color="warning"
-      >
-        <v-card-title class="text-subtitle-1">Creator Actions</v-card-title>
-        <v-card-text>
-          <div class="d-flex ga-3">
-            <v-btn color="primary" variant="elevated" @click="showResolveDialog = true">
-              Resolve Bet
-            </v-btn>
-            <v-btn color="error" variant="outlined" @click="showCancelDialog = true">
-              Cancel Bet
-            </v-btn>
-          </div>
-          <v-alert v-if="betsStore.error" type="error" variant="tonal" class="mt-3">
-            {{ betsStore.error }}
-          </v-alert>
-        </v-card-text>
-      </v-card>
-
       <!-- Resolve dialog -->
       <v-dialog v-model="showResolveDialog" max-width="400">
         <v-card>
@@ -687,36 +769,7 @@ onUnmounted(() => {
         </v-card>
       </v-dialog>
 
-      <!-- Recent trades -->
-      <v-card variant="outlined">
-        <v-card-title class="text-subtitle-1">
-          Recent Trades ({{ betsStore.trades.length }})
-        </v-card-title>
-        <v-list v-if="betsStore.trades.length > 0" density="compact">
-          <v-list-item v-for="trade in betsStore.trades" :key="trade.id">
-            <template #prepend>
-              <v-icon
-                :icon="trade.shares > 0 ? 'mdi-arrow-up-bold' : 'mdi-arrow-down-bold'"
-                :color="trade.shares > 0 ? 'success' : 'error'"
-                size="small"
-              />
-            </template>
-            <v-list-item-title class="text-body-2">
-              {{ memberName(trade.userId) }}
-              {{ trade.shares > 0 ? 'bought' : 'sold' }}
-              {{ Math.abs(trade.shares) }}
-              "{{ bet.outcomes[trade.outcomeIndex] }}"
-            </v-list-item-title>
-            <v-list-item-subtitle class="text-caption">
-              {{ trade.shares > 0 ? 'Paid' : 'Received' }}
-              {{ Math.abs(trade.cost).toFixed(2) }} dollars
-            </v-list-item-subtitle>
-          </v-list-item>
-        </v-list>
-        <v-card-text v-else>
-          <p class="text-body-2 text-medium-emphasis">No trades yet</p>
-        </v-card-text>
-      </v-card>
+      <!-- Recent trades removed - now in tabs above -->
     </template>
   </v-container>
 </template>
@@ -749,6 +802,21 @@ onUnmounted(() => {
   }
   75% {
     transform: translateX(-2px);
+  }
+}
+
+.pulse-shadow {
+  animation: pulse-glow 1.5s ease-in-out infinite;
+  border-radius: 50%;
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 152, 0, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 8px 4px rgba(255, 152, 0, 0.4);
   }
 }
 </style>
