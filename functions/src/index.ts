@@ -8,7 +8,7 @@ import { calcCost, calcPrices, calcEffectiveB } from './lmsr'
 initializeApp()
 
 const ALLOWED_DBS = new Set(['staging', '(default)'])
-const defaultDb = process.env.FIRESTORE_DATABASE || 'staging'
+const defaultDb = process.env.FIRESTORE_DATABASE || '(default)'
 
 function getDb(database?: string) {
   const name = database && ALLOWED_DBS.has(database) ? database : defaultDb
