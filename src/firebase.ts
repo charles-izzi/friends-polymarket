@@ -13,7 +13,8 @@ const firebaseConfig = {
 
 const stored = localStorage.getItem('useDevDb')
 const envDb = import.meta.env.VITE_FIRESTORE_DATABASE ?? '(default)'
-export const useDevDb = stored !== null ? stored === 'true' : envDb !== '(default)'
+// Default to dev DB only in dev mode; production builds default to (default) DB
+export const useDevDb = stored !== null ? stored === 'true' : import.meta.env.DEV && envDb !== '(default)'
 
 export const dbName = useDevDb ? 'staging' : '(default)'
 
