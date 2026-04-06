@@ -2,11 +2,13 @@
 import { RouterView, useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
+import { useBetsStore } from '@/stores/bets'
 import { computed, ref } from 'vue'
 import { useDevDb } from '@/firebase'
 
 const authStore = useAuthStore()
 const marketStore = useMarketStore()
+const betsStore = useBetsStore()
 const router = useRouter()
 
 const drawer = ref(false)
@@ -27,7 +29,12 @@ async function handleLogout() {
 const balance = computed(() => marketStore.currentMember?.balance ?? null)
 const balanceDisplay = computed(() => {
   if (balance.value === null) return null
-  return `$${balance.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const sign = balance.value < 0 ? '-' : ''
+  return `${sign}$${Math.abs(balance.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+})
+const currentUserShares = computed(() => {
+  if (!authStore.user) return 0
+  return betsStore.memberShares[authStore.user.uid] ?? 0
 })
 </script>
 
@@ -41,13 +48,17 @@ const balanceDisplay = computed(() => {
         >
       </v-app-bar-title>
       <template #append>
-        <span
+        <div
           v-if="authStore.isAuthenticated && balanceDisplay !== null"
-          class="text-body-2 mr-3"
-          :class="balance! < 0 ? 'text-error' : 'text-white'"
+          class="d-flex flex-column align-end mr-3"
         >
-          {{ balanceDisplay }}
-        </span>
+          <span class="text-body-2" :class="balance! < 0 ? 'text-error' : 'text-white'">
+            {{ balanceDisplay }}
+          </span>
+          <span class="text-caption text-white" style="opacity: 0.7; line-height: 1.1">
+            {{ currentUserShares }} shares
+          </span>
+        </div>
         <v-menu v-if="authStore.isAuthenticated" v-model="userMenu" location="bottom end">
           <template #activator="{ props }">
             <v-btn icon v-bind="props">

@@ -32,6 +32,7 @@ const vuetify = createVuetify({
           success: '#4CE660',
           'on-background': '#E0E0E0',
           'on-surface': '#E0E0E0',
+          'on-surface-variant': '#FFFFFF',
           'on-primary': '#1A1A1A',
           'on-secondary': '#1A1A1A',
         },

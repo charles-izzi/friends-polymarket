@@ -127,8 +127,19 @@ function statusColor(bet: Bet): string {
           v-for="member in marketStore.members"
           :key="member.userId"
           :title="member.displayName"
-          :subtitle="`$${member.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`"
         >
+          <v-list-item-subtitle>
+            <span :class="member.balance < 0 ? 'text-error' : ''">
+              {{ member.balance < 0 ? '-' : '' }}${{
+                Math.abs(member.balance).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })
+              }}
+            </span>
+            <span class="text-medium-emphasis mx-1">·</span>
+            <span>{{ betsStore.memberShares[member.userId] ?? 0 }} shares</span>
+          </v-list-item-subtitle>
           <template #prepend>
             <v-avatar color="primary" size="36">
               <v-img v-if="member.photoURL" :src="member.photoURL" />

@@ -19,14 +19,57 @@ export const useBetsStore = defineStore('bets', () => {
   let unsubBets: (() => void) | null = null
   let unsubPosition: (() => void) | null = null
   let unsubTrades: (() => void) | null = null
+  const allPositions = ref<Record<string, Position[]>>({})
+  const positionUnsubs = new Map<string, () => void>()
 
   const openBets = computed(() => bets.value.filter((m) => m.status === 'open'))
   const closedBets = computed(() => bets.value.filter((m) => m.status !== 'open'))
+
+  const memberShares = computed(() => {
+    const result: Record<string, number> = {}
+    for (const positions of Object.values(allPositions.value)) {
+      for (const pos of positions) {
+        const total = pos.shares.reduce((sum, s) => sum + s, 0)
+        result[pos.userId] = (result[pos.userId] ?? 0) + total
+      }
+    }
+    return result
+  })
 
   /** Get LMSR prices for a bet */
   function getPrices(bet: Bet): number[] {
     const b = calcEffectiveB(bet.totalVolume ?? 0, bet.liquidityParam)
     return calcPrices(bet.sharesSold, b)
+  }
+
+  function syncPositionListeners() {
+    const marketStore = useMarketStore()
+    if (!marketStore.market) return
+    const mid = marketStore.market.id
+
+    const unresolvedIds = new Set(
+      bets.value.filter((b) => b.status === 'open' || b.status === 'closed').map((b) => b.id),
+    )
+
+    for (const [betId, unsub] of positionUnsubs) {
+      if (!unresolvedIds.has(betId)) {
+        unsub()
+        positionUnsubs.delete(betId)
+        const { [betId]: _, ...rest } = allPositions.value
+        allPositions.value = rest
+      }
+    }
+
+    for (const betId of unresolvedIds) {
+      if (!positionUnsubs.has(betId)) {
+        const posRef = collection(db, 'markets', mid, 'bets', betId, 'positions')
+        const unsub = onSnapshot(posRef, (snap) => {
+          const positions = snap.docs.map((d) => ({ userId: d.id, ...d.data() }) as Position)
+          allPositions.value = { ...allPositions.value, [betId]: positions }
+        })
+        positionUnsubs.set(betId, unsub)
+      }
+    }
   }
 
   function listenToBets() {
@@ -42,6 +85,7 @@ export const useBetsStore = defineStore('bets', () => {
     unsubBets = onSnapshot(q, (snap) => {
       bets.value = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Bet)
       loading.value = false
+      syncPositionListeners()
     })
   }
 
@@ -143,12 +187,15 @@ export const useBetsStore = defineStore('bets', () => {
     unsubBets?.()
     unsubPosition?.()
     unsubTrades?.()
+    for (const unsub of positionUnsubs.values()) unsub()
+    positionUnsubs.clear()
     unsubBets = null
     unsubPosition = null
     unsubTrades = null
     bets.value = []
     currentPosition.value = null
     trades.value = []
+    allPositions.value = {}
   }
 
   async function resolveBet(betId: string, outcomeIndex: number) {
@@ -204,6 +251,7 @@ export const useBetsStore = defineStore('bets', () => {
     error,
     openBets,
     closedBets,
+    memberShares,
     getPrices,
     listenToBets,
     listenToBet,
