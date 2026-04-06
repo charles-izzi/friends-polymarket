@@ -104,6 +104,40 @@ export const joinMarket = onCall(async (request) => {
   return { marketId: marketDoc.id }
 })
 
+export const leaveMarket = onCall(async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
+
+  const { marketId, database } = request.data as { marketId: string; database?: string }
+  const db = getDb(database)
+  if (!marketId || typeof marketId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Market ID is required')
+  }
+
+  const marketRef = db.collection('markets').doc(marketId)
+  const marketDoc = await marketRef.get()
+  if (!marketDoc.exists) {
+    throw new HttpsError('not-found', 'Market not found')
+  }
+
+  // Prevent owner from leaving
+  if (marketDoc.data()!.ownerId === uid) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Market owner cannot leave. Delete the market instead.',
+    )
+  }
+
+  const memberRef = marketRef.collection('members').doc(uid)
+  const memberDoc = await memberRef.get()
+  if (!memberDoc.exists) {
+    throw new HttpsError('not-found', 'You are not a member of this market')
+  }
+
+  await memberRef.delete()
+  return { success: true }
+})
+
 export const createBet = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')

@@ -26,6 +26,20 @@ async function handleLogout() {
   router.replace('/login')
 }
 
+const leaveConfirm = ref(false)
+const leaving = ref(false)
+
+async function handleLeaveMarket() {
+  leaving.value = true
+  try {
+    await marketStore.leaveMarket()
+    router.replace('/join')
+  } finally {
+    leaving.value = false
+    leaveConfirm.value = false
+  }
+}
+
 const balance = computed(() => marketStore.currentMember?.balance ?? null)
 const balanceDisplay = computed(() => {
   if (balance.value === null) return null
@@ -71,9 +85,31 @@ const currentUserShares = computed(() => {
           <v-list density="compact">
             <v-list-item :title="authStore.user?.displayName ?? 'User'" disabled />
             <v-divider />
+            <v-list-item
+              v-if="marketStore.hasMarket"
+              prepend-icon="mdi-exit-run"
+              title="Leave Market"
+              @click="leaveConfirm = true"
+            />
             <v-list-item prepend-icon="mdi-logout" title="Sign Out" @click="handleLogout" />
           </v-list>
         </v-menu>
+
+        <v-dialog v-model="leaveConfirm" max-width="400">
+          <v-card>
+            <v-card-title>Leave Market?</v-card-title>
+            <v-card-text>
+              Are you sure you want to leave
+              <strong>{{ marketStore.market?.name }}</strong
+              >?
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn @click="leaveConfirm = false">Cancel</v-btn>
+              <v-btn color="error" :loading="leaving" @click="handleLeaveMarket">Leave</v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
       </template>
     </v-app-bar>
 

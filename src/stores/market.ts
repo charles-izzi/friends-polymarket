@@ -123,6 +123,22 @@ export const useMarketStore = defineStore('market', () => {
     }
   }
 
+  async function leaveMarket() {
+    error.value = ''
+    try {
+      const fn = httpsCallable<{ marketId: string; database: string }, { success: boolean }>(
+        functions,
+        'leaveMarket',
+      )
+      await fn({ marketId: market.value!.id, database: dbName })
+      cleanup()
+      loading.value = false
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : 'Failed to leave market'
+      throw e
+    }
+  }
+
   function cleanup() {
     unsubMarket?.()
     unsubMembers?.()
@@ -143,6 +159,7 @@ export const useMarketStore = defineStore('market', () => {
     loadUserMarket,
     createMarket,
     joinMarket,
+    leaveMarket,
     cleanup,
   }
 })
