@@ -5,6 +5,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions'
 import { db, dbName } from '@/firebase'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
 import { calcPrices, calcEffectiveB } from '@/utils/lmsr'
 import type { Bet, Position, Trade } from '@/types'
 
@@ -21,6 +22,15 @@ export const useBetsStore = defineStore('bets', () => {
   let unsubTrades: (() => void) | null = null
   const allPositions = ref<Record<string, Position[]>>({})
   const positionUnsubs = new Map<string, () => void>()
+
+  // Notification diff tracking
+  const previousBetsMap = new Map<string, Bet>()
+  let isFirstSnapshot = true
+  const selfActedBetIds = new Set<string>()
+
+  // Resolution-needed tracking
+  const resolutionNotifiedIds = new Set<string>()
+  let resolutionCheckInterval: ReturnType<typeof setInterval> | null = null
 
   const openBets = computed(() => bets.value.filter((m) => m.status === 'open'))
   const closedBets = computed(() => bets.value.filter((m) => m.status !== 'open'))
@@ -83,10 +93,125 @@ export const useBetsStore = defineStore('bets', () => {
     const q = query(betsRef, orderBy('createdAt', 'desc'))
 
     unsubBets = onSnapshot(q, (snap) => {
-      bets.value = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Bet)
+      const newBets = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Bet)
+      bets.value = newBets
       loading.value = false
       syncPositionListeners()
+
+      if (isFirstSnapshot) {
+        // Populate the map on first load — no notifications
+        for (const bet of newBets) previousBetsMap.set(bet.id, bet)
+        isFirstSnapshot = false
+        startResolutionCheckTimer()
+        return
+      }
+
+      processSnapshotDiff(newBets)
     })
+  }
+
+  function processSnapshotDiff(newBets: Bet[]) {
+    const authStore = useAuthStore()
+    const marketStore = useMarketStore()
+    const notificationsStore = useNotificationsStore()
+    const uid = authStore.user?.uid
+    if (!uid) return
+
+    for (const bet of newBets) {
+      const prev = previousBetsMap.get(bet.id)
+
+      if (!prev) {
+        // New bet — notify everyone except creator
+        if (bet.createdBy !== uid && !selfActedBetIds.has(bet.id)) {
+          const creatorName =
+            marketStore.members.find((m) => m.userId === bet.createdBy)?.displayName ?? 'Someone'
+          const timeLeft = formatTimeRemaining(bet.closesAt.toDate().getTime() - Date.now())
+          notificationsStore.push({
+            type: 'bet_created',
+            betId: bet.id,
+            title: `${creatorName} created a bet`,
+            body: `${bet.question}${timeLeft ? ` · ${timeLeft}` : ''}`,
+          })
+        }
+      } else if (prev.status !== bet.status) {
+        // Status changed
+        if (
+          bet.status === 'resolved' &&
+          bet.resolvedOutcome !== null &&
+          !selfActedBetIds.has(bet.id)
+        ) {
+          // Check if user has a stake
+          const positions = allPositions.value[bet.id]
+          const myPos = positions?.find((p) => p.userId === uid)
+          if (myPos && myPos.totalCost > 0) {
+            const payout = myPos.shares[bet.resolvedOutcome] ?? 0
+            const profit = payout - myPos.totalCost
+            const profitStr = `${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`
+            notificationsStore.push({
+              type: 'bet_resolved',
+              betId: bet.id,
+              title: `Resolved: "${bet.outcomes[bet.resolvedOutcome]}" won!`,
+              body: `Cost: $${myPos.totalCost.toFixed(2)} · Payout: $${payout.toFixed(2)} · Profit: ${profitStr}`,
+            })
+          }
+        } else if (bet.status === 'cancelled' && !selfActedBetIds.has(bet.id)) {
+          const positions = allPositions.value[bet.id]
+          const myPos = positions?.find((p) => p.userId === uid)
+          if (myPos && myPos.totalCost > 0) {
+            notificationsStore.push({
+              type: 'bet_cancelled',
+              betId: bet.id,
+              title: `Bet cancelled`,
+              body: `"${bet.question}" · Refunded: $${myPos.totalCost.toFixed(2)}`,
+            })
+          }
+        }
+      }
+
+      previousBetsMap.set(bet.id, bet)
+    }
+
+    selfActedBetIds.clear()
+  }
+
+  function formatTimeRemaining(diffMs: number): string {
+    if (diffMs <= 0) return ''
+    const days = Math.floor(diffMs / 86400000)
+    const hours = Math.floor((diffMs % 86400000) / 3600000)
+    const minutes = Math.floor((diffMs % 3600000) / 60000)
+    if (days > 0) return `${days}d ${hours}h left`
+    if (hours > 0) return `${hours}h ${minutes}m left`
+    return `${minutes}m left`
+  }
+
+  function checkResolutionNeeded() {
+    const authStore = useAuthStore()
+    const notificationsStore = useNotificationsStore()
+    const uid = authStore.user?.uid
+    if (!uid) return
+
+    const now = Date.now()
+    for (const bet of bets.value) {
+      if (
+        bet.createdBy === uid &&
+        (bet.status === 'open' || bet.status === 'closed') &&
+        bet.closesAt.toDate().getTime() <= now &&
+        !resolutionNotifiedIds.has(bet.id)
+      ) {
+        resolutionNotifiedIds.add(bet.id)
+        notificationsStore.push({
+          type: 'resolution_needed',
+          betId: bet.id,
+          title: 'Betting closed',
+          body: `"${bet.question}" needs resolution`,
+        })
+      }
+    }
+  }
+
+  function startResolutionCheckTimer() {
+    checkResolutionNeeded()
+    resolutionCheckInterval = setInterval(checkResolutionNeeded, 60000)
   }
 
   async function createBet(data: {
@@ -119,6 +244,7 @@ export const useBetsStore = defineStore('bets', () => {
         ...data,
         database: dbName,
       })
+      selfActedBetIds.add(result.data.betId)
       return result.data.betId
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to create bet'
@@ -196,6 +322,14 @@ export const useBetsStore = defineStore('bets', () => {
     currentPosition.value = null
     trades.value = []
     allPositions.value = {}
+    previousBetsMap.clear()
+    isFirstSnapshot = true
+    selfActedBetIds.clear()
+    resolutionNotifiedIds.clear()
+    if (resolutionCheckInterval) {
+      clearInterval(resolutionCheckInterval)
+      resolutionCheckInterval = null
+    }
   }
 
   async function resolveBet(betId: string, outcomeIndex: number) {
@@ -209,6 +343,7 @@ export const useBetsStore = defineStore('bets', () => {
         { success: boolean }
       >(functions, 'resolveBet')
 
+      selfActedBetIds.add(betId)
       await fn({
         marketId: marketStore.market.id,
         betId,
@@ -232,6 +367,7 @@ export const useBetsStore = defineStore('bets', () => {
         { success: boolean }
       >(functions, 'cancelBet')
 
+      selfActedBetIds.add(betId)
       await fn({
         marketId: marketStore.market.id,
         betId,

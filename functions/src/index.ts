@@ -1,7 +1,9 @@
 import { setGlobalOptions } from 'firebase-functions'
 import { onCall, HttpsError } from 'firebase-functions/https'
+import { onSchedule } from 'firebase-functions/scheduler'
 import { initializeApp } from 'firebase-admin/app'
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore'
+import { getMessaging } from 'firebase-admin/messaging'
 import * as crypto from 'crypto'
 import { calcCost, calcPrices, calcEffectiveB } from './lmsr'
 
@@ -20,6 +22,113 @@ setGlobalOptions({ maxInstances: 10 })
 function generateInviteCode(): string {
   return crypto.randomBytes(4).toString('hex')
 }
+
+function formatDuration(diffMs: number): string {
+  if (diffMs <= 0) return ''
+  const days = Math.floor(diffMs / 86400000)
+  const hours = Math.floor((diffMs % 86400000) / 3600000)
+  const minutes = Math.floor((diffMs % 3600000) / 60000)
+  if (days > 0) return `${days}d ${hours}h left`
+  if (hours > 0) return `${hours}h ${minutes}m left`
+  return `${minutes}m left`
+}
+
+/**
+ * Send push notifications to a list of users. Fire-and-forget — errors are logged, not thrown.
+ */
+async function sendPushToUsers(
+  db: FirebaseFirestore.Firestore,
+  marketId: string,
+  userIds: string[],
+  notification: { title: string; body: string },
+  data: Record<string, string>,
+) {
+  if (userIds.length === 0) return
+
+  const messaging = getMessaging()
+
+  // Collect all FCM tokens for target users
+  const tokenDocs: { ref: FirebaseFirestore.DocumentReference; token: string }[] = []
+  for (const userId of userIds) {
+    const tokensSnap = await db
+      .collection('markets')
+      .doc(marketId)
+      .collection('members')
+      .doc(userId)
+      .collection('fcmTokens')
+      .get()
+    for (const doc of tokensSnap.docs) {
+      const token = doc.data().token
+      if (typeof token === 'string' && token.length > 0) {
+        tokenDocs.push({ ref: doc.ref, token })
+      }
+    }
+  }
+
+  // Send messages in parallel
+  const results = await Promise.allSettled(
+    tokenDocs.map(({ ref, token }) =>
+      messaging
+        .send({
+          token,
+          notification,
+          data: { ...data, title: notification.title, body: notification.body },
+          webpush: {
+            fcmOptions: { link: data.betId ? `/bets/${data.betId}` : '/' },
+          },
+        })
+        .catch(async (err: { code?: string }) => {
+          // Clean up stale tokens
+          if (
+            err.code === 'messaging/registration-token-not-registered' ||
+            err.code === 'messaging/invalid-registration-token'
+          ) {
+            await ref.delete().catch(() => {})
+          }
+          throw err
+        }),
+    ),
+  )
+
+  const failures = results.filter((r) => r.status === 'rejected').length
+  if (failures > 0) {
+    console.warn(`Push: ${failures}/${tokenDocs.length} sends failed for market ${marketId}`)
+  }
+}
+
+export const registerFcmToken = onCall(async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
+
+  const { token, database } = request.data as { token: string; database?: string }
+  const db = getDb(database)
+
+  if (!token || typeof token !== 'string') {
+    throw new HttpsError('invalid-argument', 'FCM token is required')
+  }
+
+  // Find user's market membership
+  const memberSnap = await db.collectionGroup('members').where('userId', '==', uid).limit(1).get()
+  if (memberSnap.empty || !memberSnap.docs[0]) {
+    throw new HttpsError('not-found', 'Not a member of any market')
+  }
+
+  const memberRef = memberSnap.docs[0].ref
+  const tokensRef = memberRef.collection('fcmTokens')
+
+  // Check if token already exists to avoid duplicates
+  const existing = await tokensRef.where('token', '==', token).limit(1).get()
+  if (!existing.empty) {
+    return { success: true }
+  }
+
+  await tokensRef.add({
+    token,
+    createdAt: FieldValue.serverTimestamp(),
+  })
+
+  return { success: true }
+})
 
 export const createMarket = onCall(async (request) => {
   const uid = request.auth?.uid
@@ -212,6 +321,24 @@ export const createBet = onCall(async (request) => {
     totalVolume: 0,
   })
 
+  // Send push notifications to all market members except creator and excluded
+  const membersSnap = await db.collection('markets').doc(marketId).collection('members').get()
+  const creatorName = memberDoc.data()!.displayName || 'Someone'
+  const targetUserIds = membersSnap.docs
+    .map((d) => d.id)
+    .filter((id) => id !== uid && !sanitizedExcluded.includes(id))
+  const timeLeft = formatDuration(closeDate.getTime() - Date.now())
+  sendPushToUsers(
+    db,
+    marketId,
+    targetUserIds,
+    {
+      title: `${creatorName} created a bet`,
+      body: `${question.trim()}${timeLeft ? ` · ${timeLeft}` : ''}`,
+    },
+    { betId: betRef.id, type: 'bet_created' },
+  ).catch(() => {})
+
   return { betId: betRef.id }
 })
 
@@ -374,7 +501,7 @@ export const resolveBet = onCall(async (request) => {
   const marketRef = db.collection('markets').doc(marketId)
   const betRef = marketRef.collection('bets').doc(betId)
 
-  await db.runTransaction(async (txn) => {
+  const pushData = await db.runTransaction(async (txn) => {
     const betSnap = await txn.get(betRef)
     if (!betSnap.exists) {
       throw new HttpsError('not-found', 'Bet not found')
@@ -404,8 +531,16 @@ export const resolveBet = onCall(async (request) => {
       winningShares: number
       currentBalance: number
     }[] = []
+    // Collect per-user push data for all staked users
+    const stakedUsers: { userId: string; totalCost: number; payout: number }[] = []
+
     for (const posDoc of positionsSnap.docs) {
       const pos = posDoc.data()
+      const totalShares = (pos.shares as number[]).reduce((s, v) => s + v, 0)
+      if (totalShares > 0 || pos.totalCost > 0) {
+        const payout = pos.shares[outcomeIndex] ?? 0
+        stakedUsers.push({ userId: posDoc.id, totalCost: pos.totalCost, payout })
+      }
       const winningShares: number = pos.shares[outcomeIndex] ?? 0
       if (winningShares > 0) {
         const memberRef = marketRef.collection('members').doc(posDoc.id)
@@ -429,7 +564,30 @@ export const resolveBet = onCall(async (request) => {
     for (const { memberRef, winningShares, currentBalance } of winnerUpdates) {
       txn.update(memberRef, { balance: currentBalance + winningShares })
     }
+
+    return {
+      question: bet.question as string,
+      winningOutcome: bet.outcomes[outcomeIndex] as string,
+      stakedUsers,
+    }
   })
+
+  // Send push notifications to all staked users (except the resolver)
+  for (const user of pushData.stakedUsers) {
+    if (user.userId === uid) continue
+    const profit = user.payout - user.totalCost
+    const profitStr = `${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`
+    sendPushToUsers(
+      db,
+      marketId,
+      [user.userId],
+      {
+        title: `Resolved: "${pushData.winningOutcome}" won!`,
+        body: `Cost: $${user.totalCost.toFixed(2)} · Payout: $${user.payout.toFixed(2)} · Profit: ${profitStr}`,
+      },
+      { betId, type: 'bet_resolved' },
+    ).catch(() => {})
+  }
 
   return { success: true }
 })
@@ -452,7 +610,7 @@ export const cancelBet = onCall(async (request) => {
   const marketRef = db.collection('markets').doc(marketId)
   const betRef = marketRef.collection('bets').doc(betId)
 
-  await db.runTransaction(async (txn) => {
+  const cancelData = await db.runTransaction(async (txn) => {
     const betSnap = await txn.get(betRef)
     if (!betSnap.exists) {
       throw new HttpsError('not-found', 'Bet not found')
@@ -477,10 +635,13 @@ export const cancelBet = onCall(async (request) => {
       refundAmount: number
       currentBalance: number
     }[] = []
+    const refundedUsers: { userId: string; refundAmount: number }[] = []
+
     for (const posDoc of positionsSnap.docs) {
       const pos = posDoc.data()
       const refundAmount: number = pos.totalCost
       if (refundAmount > 0) {
+        refundedUsers.push({ userId: posDoc.id, refundAmount })
         const memberRef = marketRef.collection('members').doc(posDoc.id)
         const memberSnap = await txn.get(memberRef)
         if (memberSnap.exists) {
@@ -502,7 +663,70 @@ export const cancelBet = onCall(async (request) => {
     for (const { memberRef, refundAmount, currentBalance } of refundUpdates) {
       txn.update(memberRef, { balance: currentBalance + refundAmount })
     }
+
+    return { question: bet.question as string, refundedUsers }
   })
 
+  // Send push notifications to refunded users (except the canceller)
+  for (const user of cancelData.refundedUsers) {
+    if (user.userId === uid) continue
+    sendPushToUsers(
+      db,
+      marketId,
+      [user.userId],
+      {
+        title: 'Bet cancelled',
+        body: `"${cancelData.question}" · Refunded: $${user.refundAmount.toFixed(2)}`,
+      },
+      { betId, type: 'bet_cancelled' },
+    ).catch(() => {})
+  }
+
   return { success: true }
+})
+
+export const checkResolutionNeeded = onSchedule('every 5 minutes', async () => {
+  const now = Timestamp.now()
+
+  // Check both databases
+  for (const dbName of ALLOWED_DBS) {
+    const db = getDb(dbName)
+
+    // Find all markets
+    const marketsSnap = await db.collection('markets').get()
+    for (const marketDoc of marketsSnap.docs) {
+      const marketId = marketDoc.id
+
+      // Find open bets past their close time that haven't been notified yet
+      const betsSnap = await db
+        .collection('markets')
+        .doc(marketId)
+        .collection('bets')
+        .where('status', '==', 'open')
+        .where('closesAt', '<=', now)
+        .get()
+
+      for (const betDoc of betsSnap.docs) {
+        const bet = betDoc.data()
+
+        // Skip if already notified
+        if (bet.resolutionNotifiedAt) continue
+
+        // Mark as notified to prevent repeat notifications
+        await betDoc.ref.update({ resolutionNotifiedAt: FieldValue.serverTimestamp() })
+
+        // Send push to the bet creator
+        sendPushToUsers(
+          db,
+          marketId,
+          [bet.createdBy],
+          {
+            title: 'Betting closed',
+            body: `"${bet.question}" needs resolution`,
+          },
+          { betId: betDoc.id, type: 'resolution_needed' },
+        ).catch(() => {})
+      }
+    }
+  }
 })

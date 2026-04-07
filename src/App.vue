@@ -3,12 +3,14 @@ import { RouterView, useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 import { useBetsStore } from '@/stores/bets'
-import { computed, ref } from 'vue'
+import { useNotificationsStore } from '@/stores/notifications'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useDevDb } from '@/firebase'
 
 const authStore = useAuthStore()
 const marketStore = useMarketStore()
 const betsStore = useBetsStore()
+const notificationsStore = useNotificationsStore()
 const router = useRouter()
 
 const drawer = ref(false)
@@ -49,6 +51,36 @@ const balanceDisplay = computed(() => {
 const currentUserShares = computed(() => {
   if (!authStore.user) return 0
   return betsStore.memberShares[authStore.user.uid] ?? 0
+})
+
+const showSnackbar = computed({
+  get: () => !!notificationsStore.current,
+  set: (val: boolean) => {
+    if (!val) notificationsStore.dismiss()
+  },
+})
+
+function onNotificationClick() {
+  const n = notificationsStore.current
+  if (n) {
+    router.push(`/bets/${n.betId}`)
+    notificationsStore.dismiss()
+  }
+}
+
+// Handle navigation from service worker notification clicks
+function handleSwNavigation(e: Event) {
+  const url = (e as CustomEvent).detail?.url
+  if (url) router.push(url)
+}
+
+onMounted(() => {
+  window.addEventListener('notification-navigate', handleSwNavigation)
+  notificationsStore.initForegroundListener()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('notification-navigate', handleSwNavigation)
 })
 </script>
 
@@ -153,5 +185,40 @@ const currentUserShares = computed(() => {
     <v-main>
       <RouterView />
     </v-main>
+
+    <v-snackbar
+      v-model="showSnackbar"
+      :timeout="7000"
+      location="bottom"
+      :color="
+        notificationsStore.current
+          ? notificationsStore.getColor(notificationsStore.current.type)
+          : undefined
+      "
+      @click="onNotificationClick"
+      style="cursor: pointer"
+    >
+      <div class="d-flex align-center">
+        <v-icon
+          v-if="notificationsStore.current"
+          :icon="notificationsStore.getIcon(notificationsStore.current.type)"
+          class="mr-3"
+        />
+        <div>
+          <div class="text-subtitle-2">{{ notificationsStore.current?.title }}</div>
+          <div class="text-caption" style="opacity: 0.9">
+            {{ notificationsStore.current?.body }}
+          </div>
+        </div>
+      </div>
+      <template #actions>
+        <v-btn
+          icon="mdi-close"
+          size="small"
+          variant="text"
+          @click.stop="notificationsStore.dismiss()"
+        />
+      </template>
+    </v-snackbar>
   </v-app>
 </template>

@@ -10,7 +10,7 @@ import {
   limit,
 } from 'firebase/firestore'
 import { getFunctions, httpsCallable } from 'firebase/functions'
-import { db, dbName } from '@/firebase'
+import { db, dbName, requestPushPermission } from '@/firebase'
 import { useAuthStore } from '@/stores/auth'
 import type { Market, Member } from '@/types'
 
@@ -86,6 +86,11 @@ export const useMarketStore = defineStore('market', () => {
       })
 
       await Promise.all([marketReady, membersReady])
+
+      // Auto-prompt for push notifications if not yet asked
+      if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+        requestPushPermission()
+      }
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to load market'
     } finally {
@@ -102,6 +107,7 @@ export const useMarketStore = defineStore('market', () => {
       >(functions, 'createMarket')
       await fn({ name, database: dbName })
       await loadUserMarket()
+      requestPushPermission()
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to create market'
       throw e
@@ -117,6 +123,7 @@ export const useMarketStore = defineStore('market', () => {
       )
       await fn({ inviteCode, database: dbName })
       await loadUserMarket()
+      requestPushPermission()
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to join market'
       throw e

@@ -49,3 +49,18 @@ export interface Trade {
   priceAfter: number[]
   createdAt: Timestamp
 }
+
+export type NotificationType =
+  | 'bet_created'
+  | 'bet_resolved'
+  | 'bet_cancelled'
+  | 'resolution_needed'
+
+export interface AppNotification {
+  id: string
+  type: NotificationType
+  betId: string
+  title: string
+  body: string
+  createdAt: number
+}
