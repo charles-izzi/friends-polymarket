@@ -90,7 +90,7 @@ onUnmounted(() => {
       <v-app-bar-nav-icon v-if="authStore.isAuthenticated" @click="drawer = !drawer" />
       <v-app-bar-title :style="{ marginLeft: authStore.isAuthenticated ? '0' : '16px' }">
         <router-link to="/" class="text-decoration-none" style="color: #4a4a4a"
-          >Polymarket with Friends</router-link
+          >Friendly Bet</router-link
         >
       </v-app-bar-title>
       <template #append>

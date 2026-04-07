@@ -23,7 +23,7 @@ messaging.onBackgroundMessage((payload) => {
 
   self.registration.showNotification(title, {
     body,
-    icon: '/favicon.ico',
+    icon: '/logo-192.png',
     data: { betId: data.betId, type: data.type },
   })
 })
