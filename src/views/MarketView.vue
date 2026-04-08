@@ -62,6 +62,8 @@ function statusColor(bet: Bet): string {
       return 'default'
   }
 }
+
+const sortedMembers = computed(() => [...marketStore.members].sort((a, b) => b.balance - a.balance))
 </script>
 
 <template>
@@ -122,9 +124,10 @@ function statusColor(bet: Bet): string {
     </v-card>
 
     <v-card variant="flat">
+      <v-card-title class="text-h6">Leaderboard</v-card-title>
       <v-list>
         <v-list-item
-          v-for="member in marketStore.members"
+          v-for="(member, index) in sortedMembers"
           :key="member.userId"
           :title="member.displayName"
         >
@@ -141,10 +144,7 @@ function statusColor(bet: Bet): string {
             <span>{{ betsStore.memberShares[member.userId] ?? 0 }} shares</span>
           </v-list-item-subtitle>
           <template #prepend>
-            <v-avatar color="primary" size="36">
-              <v-img v-if="member.photoURL" :src="member.photoURL" />
-              <span v-else class="text-body-2">{{ member.displayName[0] }}</span>
-            </v-avatar>
+            <span class="text-body-2 font-weight-bold mr-6 ml-3">{{ index + 1 }}</span>
           </template>
           <template #append>
             <v-chip
