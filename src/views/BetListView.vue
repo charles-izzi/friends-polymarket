@@ -107,28 +107,33 @@ function statusColor(bet: Bet): string {
       @click="router.push(`/bets/${bet.id}`)"
     >
       <v-card-text>
-        <div class="d-flex align-center justify-space-between mb-2">
-          <v-chip :color="statusColor(bet)" size="small" variant="tonal">
-            {{ effectiveStatus(bet) }}
-          </v-chip>
-          <span class="text-caption text-medium-emphasis">
-            <template v-if="effectiveStatus(bet) === 'open'">{{ timeRemaining(bet) }}</template>
-            <template
-              v-else-if="effectiveStatus(bet) === 'resolved' && bet.resolvedOutcome !== null"
-            >
-              Winner: {{ bet.outcomes[bet.resolvedOutcome] }}
-            </template>
-            <template v-else-if="effectiveStatus(bet) === 'cancelled'">Refunded</template>
-            <template
-              v-else-if="effectiveStatus(bet) === 'closed' && bet.createdBy === authStore.user?.uid"
-            >
-              <v-icon icon="mdi-alert-circle" size="x-small" color="warning" class="mr-1" />
-              Needs resolution
-            </template>
-          </span>
+        <div class="d-flex align-center ga-4 mb-2">
+          <div class="flex-grow-1">
+            <p class="text-subtitle-1 font-weight-medium">{{ bet.question }}</p>
+          </div>
+          <div class="d-flex flex-column align-end justify-center ga-1 flex-shrink-0">
+            <v-chip :color="statusColor(bet)" size="small" variant="tonal">
+              {{ effectiveStatus(bet) }}
+            </v-chip>
+            <span class="text-caption text-medium-emphasis">
+              <template v-if="effectiveStatus(bet) === 'open'">{{ timeRemaining(bet) }}</template>
+              <template
+                v-else-if="effectiveStatus(bet) === 'resolved' && bet.resolvedOutcome !== null"
+              >
+                Winner: {{ bet.outcomes[bet.resolvedOutcome] }}
+              </template>
+              <template v-else-if="effectiveStatus(bet) === 'cancelled'">Refunded</template>
+              <template
+                v-else-if="
+                  effectiveStatus(bet) === 'closed' && bet.createdBy === authStore.user?.uid
+                "
+              >
+                <v-icon icon="mdi-alert-circle" size="x-small" color="warning" class="mr-1" />
+                Needs resolution
+              </template>
+            </span>
+          </div>
         </div>
-
-        <p class="text-subtitle-1 font-weight-medium mb-2">{{ bet.question }}</p>
 
         <div
           :style="{

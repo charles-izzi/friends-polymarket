@@ -21,13 +21,15 @@ const devDb = ref(useDevDb)
 const deferredPrompt = ref<Event | null>(null)
 const installDismissed = ref(localStorage.getItem('pwa-install-dismissed') === 'true')
 const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent)
-const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
-  || ('standalone' in navigator && (navigator as unknown as { standalone: boolean }).standalone)
-const showInstallBanner = computed(() =>
-  authStore.isAuthenticated
-  && !installDismissed.value
-  && !isInStandaloneMode
-  && (deferredPrompt.value !== null || isIos)
+const isInStandaloneMode =
+  window.matchMedia('(display-mode: standalone)').matches ||
+  ('standalone' in navigator && (navigator as unknown as { standalone: boolean }).standalone)
+const showInstallBanner = computed(
+  () =>
+    authStore.isAuthenticated &&
+    !installDismissed.value &&
+    !isInStandaloneMode &&
+    (deferredPrompt.value !== null || isIos),
 )
 
 function handleBeforeInstallPrompt(e: Event) {
@@ -36,7 +38,10 @@ function handleBeforeInstallPrompt(e: Event) {
 }
 
 async function installApp() {
-  const prompt = deferredPrompt.value as { prompt: () => void; userChoice: Promise<{ outcome: string }> } | null
+  const prompt = deferredPrompt.value as {
+    prompt: () => void
+    userChoice: Promise<{ outcome: string }>
+  } | null
   if (!prompt) return
   prompt.prompt()
   const { outcome } = await prompt.userChoice
@@ -235,13 +240,12 @@ onUnmounted(() => {
         <template v-if="isIos">
           <v-banner-text>
             Install Friendly Bet for notifications: tap
-            <v-icon icon="mdi-export-variant" size="small" /> then <strong>Add to Home Screen</strong>.
+            <v-icon icon="mdi-export-variant" size="small" /> then
+            <strong>Add to Home Screen</strong>.
           </v-banner-text>
         </template>
         <template v-else>
-          <v-banner-text>
-            Install Friendly Bet for push notifications.
-          </v-banner-text>
+          <v-banner-text> Install Friendly Bet for push notifications. </v-banner-text>
         </template>
         <template #actions>
           <v-btn text="Dismiss" @click="dismissInstallBanner" />
