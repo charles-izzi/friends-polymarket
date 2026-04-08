@@ -17,6 +17,41 @@ const drawer = ref(false)
 const userMenu = ref(false)
 const devDb = ref(useDevDb)
 
+// PWA Install banner
+const deferredPrompt = ref<Event | null>(null)
+const installDismissed = ref(localStorage.getItem('pwa-install-dismissed') === 'true')
+const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent)
+const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
+  || ('standalone' in navigator && (navigator as unknown as { standalone: boolean }).standalone)
+const showInstallBanner = computed(() =>
+  authStore.isAuthenticated
+  && !installDismissed.value
+  && !isInStandaloneMode
+  && (deferredPrompt.value !== null || isIos)
+)
+
+function handleBeforeInstallPrompt(e: Event) {
+  e.preventDefault()
+  deferredPrompt.value = e
+}
+
+async function installApp() {
+  const prompt = deferredPrompt.value as { prompt: () => void; userChoice: Promise<{ outcome: string }> } | null
+  if (!prompt) return
+  prompt.prompt()
+  const { outcome } = await prompt.userChoice
+  if (outcome === 'accepted') {
+    deferredPrompt.value = null
+    installDismissed.value = true
+    localStorage.setItem('pwa-install-dismissed', 'true')
+  }
+}
+
+function dismissInstallBanner() {
+  installDismissed.value = true
+  localStorage.setItem('pwa-install-dismissed', 'true')
+}
+
 function toggleDevDb() {
   localStorage.setItem('useDevDb', String(devDb.value))
   window.location.reload()
@@ -76,11 +111,18 @@ function handleSwNavigation(e: Event) {
 
 onMounted(() => {
   window.addEventListener('notification-navigate', handleSwNavigation)
+  window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+  window.addEventListener('appinstalled', () => {
+    deferredPrompt.value = null
+    installDismissed.value = true
+    localStorage.setItem('pwa-install-dismissed', 'true')
+  })
   notificationsStore.initForegroundListener()
 })
 
 onUnmounted(() => {
   window.removeEventListener('notification-navigate', handleSwNavigation)
+  window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
 })
 </script>
 
@@ -183,6 +225,29 @@ onUnmounted(() => {
     </v-navigation-drawer>
 
     <v-main>
+      <v-banner
+        v-if="showInstallBanner"
+        icon="mdi-cellphone-arrow-down"
+        lines="two"
+        color="primary"
+        class="mb-2"
+      >
+        <template v-if="isIos">
+          <v-banner-text>
+            Install Friendly Bet for notifications: tap
+            <v-icon icon="mdi-export-variant" size="small" /> then <strong>Add to Home Screen</strong>.
+          </v-banner-text>
+        </template>
+        <template v-else>
+          <v-banner-text>
+            Install Friendly Bet for push notifications.
+          </v-banner-text>
+        </template>
+        <template #actions>
+          <v-btn text="Dismiss" @click="dismissInstallBanner" />
+          <v-btn v-if="!isIos" color="white" variant="flat" text="Install" @click="installApp" />
+        </template>
+      </v-banner>
       <RouterView />
     </v-main>
 
