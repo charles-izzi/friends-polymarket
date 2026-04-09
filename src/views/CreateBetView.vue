@@ -17,6 +17,19 @@ const customOutcome = ref('')
 const excludedMembers = ref<string[]>([])
 const closesAt = ref('')
 const submitting = ref(false)
+const validated = ref(false)
+
+const questionRules = computed(() =>
+  validated.value && !question.value.trim() ? ['Question is required'] : [],
+)
+const closesAtRules = computed(() =>
+  validated.value && !closesAt.value ? ['Close date is required'] : [],
+)
+const outcomesError = computed(() =>
+  validated.value && type.value === 'multiple_choice' && outcomes.value.length < 2
+    ? 'At least 2 outcomes are required'
+    : '',
+)
 
 const otherMembers = computed(() =>
   marketStore.members.filter((m) => m.userId !== authStore.user?.uid),
@@ -52,6 +65,8 @@ function onTypeChange(newType: 'binary' | 'multiple_choice') {
 }
 
 async function handleSubmit() {
+  validated.value = true
+  if (!question.value.trim() || !closesAt.value || outcomes.value.length < 2) return
   submitting.value = true
   try {
     await betsStore.createBet({
@@ -79,10 +94,11 @@ async function handleSubmit() {
       <v-textarea
         v-model="question"
         label="Question"
-        placeholder="e.g. Will Jake finish the marathon under 4 hours?"
+        placeholder="e.g. Will Cameron eat the whole pizza in 1 hour?"
         variant="outlined"
         rows="2"
         :disabled="submitting"
+        :rules="questionRules"
         class="mb-2"
       />
 
@@ -110,6 +126,7 @@ async function handleSubmit() {
           >
             {{ outcome }}
           </v-chip>
+          <p v-if="outcomesError" class="text-caption text-error mt-1">{{ outcomesError }}</p>
           <div class="d-flex align-center mt-2">
             <v-text-field
               v-model="customOutcome"
@@ -138,6 +155,7 @@ async function handleSubmit() {
         variant="outlined"
         :min="minDateTime"
         :disabled="submitting"
+        :rules="closesAtRules"
         class="mb-2"
       />
 
@@ -163,7 +181,7 @@ async function handleSubmit() {
         block
         size="large"
         :loading="submitting"
-        :disabled="!question.trim() || !closesAt || outcomes.length < 2"
+        :disabled="submitting"
       >
         Create Bet
       </v-btn>

@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useBetsStore } from '@/stores/bets'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
-import { calcCost, calcEffectiveB } from '@/utils/lmsr'
+import { calcCost, calcEffectiveB, calcPrices } from '@/utils/lmsr'
 import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
 import type { Bet } from '@/types'
@@ -89,6 +89,21 @@ const tradeCosts = computed(() => {
 })
 
 const totalCost = computed(() => tradeCosts.value.reduce((sum, c) => sum + c, 0))
+
+const projectedPrices = computed(() => {
+  if (!bet.value || !hasPendingTrades.value) return prices.value
+  const newSharesSold = [...bet.value.sharesSold]
+  for (let i = 0; i < tradeDiffs.value.length; i++) {
+    newSharesSold[i] = (newSharesSold[i] ?? 0) + (tradeDiffs.value[i] ?? 0)
+  }
+  const b = calcEffectiveB(bet.value.totalVolume ?? 0, bet.value.liquidityParam)
+  return calcPrices(newSharesSold, b)
+})
+
+const profitPotential = computed(() => {
+  if (!bet.value) return 0
+  return Math.max(...tradeDiffs.value.map((d, i) => d - totalCost.value))
+})
 
 const tradeActionLabel = computed(() => {
   const buys = tradeDiffs.value.filter((d) => d > 0).length
@@ -500,12 +515,37 @@ onUnmounted(() => {
                 }"
               />
               <span class="text-body-2 font-weight-medium">{{ outcome }}</span>
-              <span class="text-caption text-medium-emphasis ml-auto" style="align-self: flex-end">
-                {{ (1 / (prices[i] ?? 1)).toFixed(2) }}x
-              </span>
-              <span class="font-weight-bold" style="font-size: 15px">
-                {{ ((prices[i] ?? 0) * 100).toFixed(0) }}%
-              </span>
+              <div class="ml-auto d-flex flex-column align-end" style="line-height: 1.2">
+                <div class="d-flex align-baseline ga-2">
+                  <span class="text-caption text-medium-emphasis">
+                    {{ (1 / (prices[i] ?? 1)).toFixed(2) }}x
+                  </span>
+                  <span class="font-weight-bold" style="font-size: 15px">
+                    {{ ((prices[i] ?? 0) * 100).toFixed(0) }}%
+                  </span>
+                </div>
+                <div v-if="(tradeDiffs[i] ?? 0) !== 0" class="d-flex align-baseline ga-2">
+                  <span
+                    class="text-caption font-weight-bold"
+                    :style="{
+                      color:
+                        1 / (projectedPrices[i] ?? 1) >= 1 / (prices[i] ?? 1)
+                          ? '#4caf50'
+                          : '#ef5350',
+                    }"
+                  >
+                    {{ (1 / (projectedPrices[i] ?? 1)).toFixed(2) }}x
+                  </span>
+                  <span
+                    class="text-caption font-weight-bold"
+                    :style="{
+                      color: (projectedPrices[i] ?? 0) >= (prices[i] ?? 0) ? '#4caf50' : '#ef5350',
+                    }"
+                  >
+                    {{ ((projectedPrices[i] ?? 0) * 100).toFixed(0) }}%
+                  </span>
+                </div>
+              </div>
             </div>
 
             <v-slider
@@ -591,6 +631,14 @@ onUnmounted(() => {
                 <span>Net cost</span>
                 <span :style="{ color: totalCost <= 0 ? '#4caf50' : '#ef5350' }">
                   {{ totalCost <= 0 ? '+' : '-' }}${{ Math.abs(totalCost).toFixed(2) }}
+                </span>
+              </div>
+              <div
+                class="d-flex align-center justify-space-between text-body-2 font-weight-bold mt-1"
+              >
+                <span>Profit potential</span>
+                <span :style="{ color: profitPotential >= 0 ? '#4caf50' : '#ef5350' }">
+                  {{ profitPotential >= 0 ? '+' : '' }}${{ profitPotential.toFixed(2) }}
                 </span>
               </div>
             </div>
