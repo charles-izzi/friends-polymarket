@@ -234,7 +234,7 @@ const chartSeries = computed<ChartSeries[]>(() => {
 
 const chartLabels = computed(() => {
   if (!bet.value) return []
-  const count = (chartSeries.value[0]?.data.length ?? 0)
+  const count = chartSeries.value[0]?.data.length ?? 0
   return Array.from({ length: count }, (_, i) => (i === 0 ? 'Start' : `#${i}`))
 })
 
@@ -500,8 +500,11 @@ onUnmounted(() => {
                 }"
               />
               <span class="text-body-2 font-weight-medium">{{ outcome }}</span>
-              <span class="text-caption text-medium-emphasis ml-auto">
-                {{ ((prices[i] ?? 0) * 100).toFixed(1) }}%
+              <span class="text-caption text-medium-emphasis ml-auto" style="align-self: flex-end">
+                {{ (1 / (prices[i] ?? 1)).toFixed(2) }}x
+              </span>
+              <span class="font-weight-bold" style="font-size: 15px">
+                {{ ((prices[i] ?? 0) * 100).toFixed(0) }}%
               </span>
             </div>
 
@@ -527,9 +530,25 @@ onUnmounted(() => {
             <div class="text-caption text-medium-emphasis" style="margin-top: 2px">
               {{ (position?.shares[i] ?? 0).toFixed(0) }} shares held
               <span v-if="(tradeDiffs[i] ?? 0) !== 0" class="ml-1">
-                &rarr; {{ (desiredShares[i] ?? 0).toFixed(0) }}
-                <span :style="{ color: (tradeDiffs[i] ?? 0) > 0 ? '#4caf50' : '#ef5350' }">
+                &rarr;
+                <span
+                  :style="{
+                    color: (tradeDiffs[i] ?? 0) > 0 ? '#4caf50' : '#ef5350',
+                    marginLeft: '3px',
+                  }"
+                >
                   ({{ (tradeDiffs[i] ?? 0) > 0 ? '+' : '' }}{{ tradeDiffs[i] ?? 0 }})
+                </span>
+
+                <span
+                  :style="{
+                    color: (tradeCosts[i] ?? 0) <= 0 ? '#4caf50' : '#ef5350',
+                    marginLeft: '3px',
+                  }"
+                >
+                  ({{ (tradeCosts[i] ?? 0) <= 0 ? '+' : '-' }}${{
+                    Math.abs(tradeCosts[i] ?? 0).toFixed(2)
+                  }})
                 </span>
               </span>
             </div>
@@ -540,12 +559,40 @@ onUnmounted(() => {
             <v-divider class="mb-3" />
 
             <div class="mb-3">
-              <p v-for="(line, idx) in tradeSummaryLines" :key="idx" class="text-body-2">
-                {{ line }}
-              </p>
-              <p class="text-body-2 font-weight-bold mt-1">
-                Net cost: {{ totalCost >= 0 ? '' : '-' }}${{ Math.abs(totalCost).toFixed(2) }}
-              </p>
+              <div
+                v-for="(outcome, i) in bet.outcomes"
+                :key="'summary-' + i"
+                v-show="(tradeDiffs[i] ?? 0) !== 0"
+                class="d-flex align-center justify-space-between text-body-2 py-1"
+                style="
+                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                "
+              >
+                <span>
+                  <span :class="(tradeDiffs[i] ?? 0) > 0 ? 'text-success' : 'text-error'">
+                    {{ (tradeDiffs[i] ?? 0) > 0 ? 'Buy' : 'Sell' }}
+                  </span>
+                  "{{ outcome }}"
+                </span>
+                <span class="d-flex ga-2">
+                  <span :style="{ color: (tradeDiffs[i] ?? 0) > 0 ? '#4caf50' : '#ef5350' }">
+                    ({{ (tradeDiffs[i] ?? 0) > 0 ? '+' : '' }}{{ tradeDiffs[i] ?? 0 }})
+                  </span>
+                  <span :style="{ color: (tradeCosts[i] ?? 0) <= 0 ? '#4caf50' : '#ef5350' }">
+                    ({{ (tradeCosts[i] ?? 0) <= 0 ? '+' : '-' }}${{
+                      Math.abs(tradeCosts[i] ?? 0).toFixed(2)
+                    }})
+                  </span>
+                </span>
+              </div>
+              <div
+                class="d-flex align-center justify-space-between text-body-2 font-weight-bold mt-2"
+              >
+                <span>Net cost</span>
+                <span :style="{ color: totalCost <= 0 ? '#4caf50' : '#ef5350' }">
+                  {{ totalCost <= 0 ? '+' : '-' }}${{ Math.abs(totalCost).toFixed(2) }}
+                </span>
+              </div>
             </div>
 
             <div class="d-flex ga-2">
