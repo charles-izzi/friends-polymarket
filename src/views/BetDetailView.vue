@@ -524,7 +524,7 @@ onUnmounted(() => {
                     {{ ((prices[i] ?? 0) * 100).toFixed(0) }}%
                   </span>
                 </div>
-                <div v-if="(tradeDiffs[i] ?? 0) !== 0" class="d-flex align-baseline ga-2">
+                <div v-if="hasPendingTrades" class="d-flex align-baseline ga-2">
                   <span
                     class="text-caption font-weight-bold"
                     :style="{
