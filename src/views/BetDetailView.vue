@@ -7,7 +7,6 @@ import { useAuthStore } from '@/stores/auth'
 import { calcCost, calcEffectiveB, calcPrices } from '@/utils/lmsr'
 import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
-import type { Bet } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -93,16 +92,19 @@ const totalCost = computed(() => tradeCosts.value.reduce((sum, c) => sum + c, 0)
 const projectedPrices = computed(() => {
   if (!bet.value || !hasPendingTrades.value) return prices.value
   const newSharesSold = [...bet.value.sharesSold]
+  let projectedVolume = bet.value.totalVolume ?? 0
   for (let i = 0; i < tradeDiffs.value.length; i++) {
-    newSharesSold[i] = (newSharesSold[i] ?? 0) + (tradeDiffs.value[i] ?? 0)
+    const diff = tradeDiffs.value[i] ?? 0
+    newSharesSold[i] = (newSharesSold[i] ?? 0) + diff
+    projectedVolume += Math.abs(diff)
   }
-  const b = calcEffectiveB(bet.value.totalVolume ?? 0, bet.value.liquidityParam)
+  const b = calcEffectiveB(projectedVolume, bet.value.liquidityParam)
   return calcPrices(newSharesSold, b)
 })
 
 const profitPotential = computed(() => {
   if (!bet.value) return 0
-  return Math.max(...tradeDiffs.value.map((d, i) => d - totalCost.value))
+  return Math.max(...tradeDiffs.value.map((d) => d - totalCost.value))
 })
 
 const tradeActionLabel = computed(() => {
@@ -111,23 +113,6 @@ const tradeActionLabel = computed(() => {
   if (buys > 0 && sells > 0) return 'Trade'
   if (sells > 0) return 'Sell'
   return 'Buy'
-})
-
-const tradeSummaryLines = computed(() => {
-  if (!bet.value) return []
-  const lines: string[] = []
-  tradeDiffs.value.forEach((diff, i) => {
-    if (diff === 0) return
-    const cost = tradeCosts.value[i] ?? 0
-    if (diff > 0) {
-      lines.push(`Buy ${diff} "${bet.value!.outcomes[i]}" for $${cost.toFixed(2)}`)
-    } else {
-      lines.push(
-        `Sell ${Math.abs(diff)} "${bet.value!.outcomes[i]}" for $${Math.abs(cost).toFixed(2)}`,
-      )
-    }
-  })
-  return lines
 })
 
 const limitWarnings = ref<Record<number, boolean>>({})
