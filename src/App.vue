@@ -168,6 +168,12 @@ onUnmounted(() => {
             />
             <v-divider />
             <v-list-item
+              prepend-icon="mdi-chart-box"
+              title="My Stats"
+              to="/stats"
+              @click="userMenu = false"
+            />
+            <v-list-item
               v-if="marketStore.hasMarket"
               prepend-icon="mdi-exit-run"
               title="Leave Market"
@@ -213,6 +219,13 @@ onUnmounted(() => {
           prepend-icon="mdi-plus"
           title="Create Bet"
           to="/bets/create"
+          @click="drawer = false"
+        />
+        <v-list-item
+          class="ml-4"
+          prepend-icon="mdi-chart-box"
+          title="My Stats"
+          to="/stats"
           @click="drawer = false"
         />
       </v-list>

@@ -7,6 +7,100 @@ import { getMessaging } from 'firebase-admin/messaging'
 import * as crypto from 'crypto'
 import { calcCost, calcPrices, calcEffectiveB } from './lmsr'
 
+// ---------- Stats types (mirrored from src/types.ts) ----------
+interface ResolvedBetRecord {
+  betId: string
+  question: string
+  resolvedAt: FirebaseFirestore.Timestamp
+  totalCost: number
+  payout: number
+  profit: number
+  entryProbability: number
+  primaryOutcome: number
+  winningOutcome: number
+  balanceAfter: number
+  wasFavorite: boolean
+}
+
+interface UserStats {
+  resolvedBets: ResolvedBetRecord[]
+  totalResolved: number
+  wins: number
+  totalWagered: number
+  totalProfit: number
+  currentStreak: { type: 'win' | 'loss'; count: number }
+  bestBet: { betId: string; question: string; profit: number } | null
+  worstBet: { betId: string; question: string; profit: number } | null
+  biggestUpset: {
+    betId: string
+    question: string
+    entryProbability: number
+    profit: number
+  } | null
+  avgBetSize: number
+  favoriteRate: number
+}
+
+function recomputeStats(records: ResolvedBetRecord[]): Omit<UserStats, 'resolvedBets'> {
+  let wins = 0
+  let totalWagered = 0
+  let totalProfit = 0
+  let favoriteCount = 0
+  let bestBet: UserStats['bestBet'] = null
+  let worstBet: UserStats['worstBet'] = null
+  let biggestUpset: UserStats['biggestUpset'] = null
+  const currentStreak: UserStats['currentStreak'] = { type: 'win', count: 0 }
+
+  for (const r of records) {
+    const isWin = r.profit > 0
+    if (isWin) wins++
+    totalWagered += Math.abs(r.totalCost)
+    totalProfit += r.profit
+    if (r.wasFavorite) favoriteCount++
+
+    if (!bestBet || r.profit > bestBet.profit) {
+      bestBet = { betId: r.betId, question: r.question, profit: r.profit }
+    }
+    if (!worstBet || r.profit < worstBet.profit) {
+      worstBet = { betId: r.betId, question: r.question, profit: r.profit }
+    }
+    if (isWin && (!biggestUpset || r.entryProbability < biggestUpset.entryProbability)) {
+      biggestUpset = {
+        betId: r.betId,
+        question: r.question,
+        entryProbability: r.entryProbability,
+        profit: r.profit,
+      }
+    }
+  }
+
+  // Streak: walk from most recent backwards
+  if (records.length > 0) {
+    const lastWin = records[records.length - 1]!.profit > 0
+    currentStreak.type = lastWin ? 'win' : 'loss'
+    currentStreak.count = 0
+    for (let i = records.length - 1; i >= 0; i--) {
+      if (records[i]!.profit > 0 === lastWin) {
+        currentStreak.count++
+      } else break
+    }
+  }
+
+  const totalResolved = records.length
+  return {
+    totalResolved,
+    wins,
+    totalWagered,
+    totalProfit,
+    currentStreak,
+    bestBet,
+    worstBet,
+    biggestUpset,
+    avgBetSize: totalResolved > 0 ? totalWagered / totalResolved : 0,
+    favoriteRate: totalResolved > 0 ? favoriteCount / totalResolved : 0,
+  }
+}
+
 initializeApp()
 
 const ALLOWED_DBS = new Set(['staging', '(default)'])
@@ -525,14 +619,26 @@ export const resolveBet = onCall(async (request) => {
     // All reads must happen before any writes in a Firestore transaction
     const positionsSnap = await txn.get(betRef.collection('positions'))
 
-    // Read all member docs for winners
+    // Read all trades for this bet to determine entry probabilities (for stats)
+    const tradesSnap = await txn.get(betRef.collection('trades').orderBy('createdAt', 'asc'))
+    const allTrades = tradesSnap.docs.map((d) => d.data())
+
+    // Pre-compute entry info per user: first trade's priceAfter gives entry probabilities
+    const userFirstTrade = new Map<string, { priceAfter: number[] }>()
+    for (const t of allTrades) {
+      if (!userFirstTrade.has(t.userId)) {
+        userFirstTrade.set(t.userId, { priceAfter: t.priceAfter })
+      }
+    }
+
+    // Read all member docs for winners + all staked members for stats
     const winnerUpdates: {
       memberRef: FirebaseFirestore.DocumentReference
       winningShares: number
       currentBalance: number
     }[] = []
-    // Collect per-user push data for all staked users
     const stakedUsers: { userId: string; totalCost: number; payout: number }[] = []
+    const memberBalances = new Map<string, number>()
 
     for (const posDoc of positionsSnap.docs) {
       const pos = posDoc.data()
@@ -542,20 +648,34 @@ export const resolveBet = onCall(async (request) => {
         stakedUsers.push({ userId: posDoc.id, totalCost: pos.totalCost, payout })
       }
       const winningShares: number = pos.shares[outcomeIndex] ?? 0
-      if (winningShares > 0) {
+      // Read member doc for all staked users (needed for balance + stats)
+      if (
+        winningShares > 0 ||
+        (pos.shares as number[]).reduce((s: number, v: number) => s + v, 0) > 0 ||
+        pos.totalCost > 0
+      ) {
         const memberRef = marketRef.collection('members').doc(posDoc.id)
         const memberSnap = await txn.get(memberRef)
         if (memberSnap.exists) {
-          winnerUpdates.push({
-            memberRef,
-            winningShares,
-            currentBalance: memberSnap.data()!.balance,
-          })
+          const bal = memberSnap.data()!.balance as number
+          memberBalances.set(posDoc.id, bal)
+          if (winningShares > 0) {
+            winnerUpdates.push({ memberRef, winningShares, currentBalance: bal })
+          }
         }
       }
     }
 
-    // Now perform all writes
+    // Read existing stats docs for all staked users
+    const existingStats = new Map<string, UserStats | null>()
+    for (const user of stakedUsers) {
+      const statsRef = marketRef.collection('stats').doc(user.userId)
+      const statsSnap = await txn.get(statsRef)
+      existingStats.set(user.userId, statsSnap.exists ? (statsSnap.data() as UserStats) : null)
+    }
+
+    // ---- All reads complete — now perform writes ----
+
     txn.update(betRef, {
       status: 'resolved',
       resolvedOutcome: outcomeIndex,
@@ -563,6 +683,48 @@ export const resolveBet = onCall(async (request) => {
 
     for (const { memberRef, winningShares, currentBalance } of winnerUpdates) {
       txn.update(memberRef, { balance: currentBalance + winningShares })
+    }
+
+    // Write stats for each staked user
+    for (const user of stakedUsers) {
+      const posDoc = positionsSnap.docs.find((d) => d.id === user.userId)
+      const shares: number[] = posDoc ? posDoc.data().shares : []
+      const primaryOutcome = shares.reduce((best, s, i) => (s > (shares[best] ?? 0) ? i : best), 0)
+
+      const firstTrade = userFirstTrade.get(user.userId)
+      const entryPrices = firstTrade?.priceAfter ?? []
+      const entryProbability = entryPrices[primaryOutcome] ?? 1 / (bet.outcomes.length || 2)
+
+      let wasFavorite = false
+      if (entryPrices.length > 0) {
+        const maxPrice = Math.max(...entryPrices)
+        wasFavorite = (entryPrices[primaryOutcome] ?? 0) >= maxPrice - 0.001
+      }
+
+      const currentBalance = memberBalances.get(user.userId) ?? 0
+      const balanceAfter = currentBalance + (user.payout > 0 ? user.payout : 0)
+
+      const record: ResolvedBetRecord = {
+        betId,
+        question: bet.question,
+        resolvedAt: Timestamp.now(),
+        totalCost: user.totalCost,
+        payout: user.payout,
+        profit: user.payout - user.totalCost,
+        entryProbability,
+        primaryOutcome,
+        winningOutcome: outcomeIndex,
+        balanceAfter,
+        wasFavorite,
+      }
+
+      const existing = existingStats.get(user.userId)
+      const allRecords = [...(existing?.resolvedBets ?? []), record]
+      const statsComputed = recomputeStats(allRecords)
+      txn.set(marketRef.collection('stats').doc(user.userId), {
+        resolvedBets: allRecords,
+        ...statsComputed,
+      })
     }
 
     return {
@@ -729,4 +891,127 @@ export const checkResolutionNeeded = onSchedule('every 5 minutes', async () => {
       }
     }
   }
+})
+
+/**
+ * One-time callable to backfill stats for all resolved bets in a market.
+ * Iterates resolved bets chronologically and builds stats from scratch.
+ */
+export const backfillStats = onCall(async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
+
+  const { marketId, database } = request.data as {
+    marketId: string
+    database?: string
+  }
+  const db = getDb(database)
+
+  if (!marketId) {
+    throw new HttpsError('invalid-argument', 'Market ID is required')
+  }
+
+  // Verify caller is market owner
+  const marketDoc = await db.collection('markets').doc(marketId).get()
+  if (!marketDoc.exists) throw new HttpsError('not-found', 'Market not found')
+  if (marketDoc.data()!.ownerId !== uid) {
+    throw new HttpsError('permission-denied', 'Only the market owner can backfill stats')
+  }
+
+  const marketRef = db.collection('markets').doc(marketId)
+
+  // Get all resolved bets ordered chronologically
+  const allBetsSnap = await marketRef.collection('bets').orderBy('createdAt', 'asc').get()
+
+  const resolvedBetDocs = allBetsSnap.docs.filter((d) => d.data().status === 'resolved')
+
+  // Accumulate stats per user
+  const userRecords = new Map<string, ResolvedBetRecord[]>()
+
+  // Read all member balances for balance tracking
+  const membersSnap = await marketRef.collection('members').get()
+  const memberBalances = new Map<string, number>()
+  const defaultBalance = marketDoc.data()!.defaultBalance ?? 0
+  for (const m of membersSnap.docs) {
+    memberBalances.set(m.id, defaultBalance)
+  }
+
+  for (const betDoc of resolvedBetDocs) {
+    const bet = betDoc.data()
+    const winningOutcome: number = bet.resolvedOutcome
+
+    // Read positions for this bet
+    const posSnap = await betDoc.ref.collection('positions').get()
+
+    // Read trades for entry probability
+    const tradesSnap = await betDoc.ref.collection('trades').orderBy('createdAt', 'asc').get()
+    const userFirstTrade = new Map<string, { priceAfter: number[] }>()
+    for (const tDoc of tradesSnap.docs) {
+      const t = tDoc.data()
+      if (!userFirstTrade.has(t.userId)) {
+        userFirstTrade.set(t.userId, { priceAfter: t.priceAfter })
+      }
+    }
+
+    for (const posDoc of posSnap.docs) {
+      const pos = posDoc.data()
+      const shares: number[] = pos.shares ?? []
+      const totalShares = shares.reduce((s, v) => s + v, 0)
+      if (totalShares <= 0 && pos.totalCost <= 0) continue
+
+      const userId = posDoc.id
+      const payout = shares[winningOutcome] ?? 0
+      const profit = payout - pos.totalCost
+
+      const primaryOutcome = shares.reduce((best, s, i) => (s > (shares[best] ?? 0) ? i : best), 0)
+
+      const firstTrade = userFirstTrade.get(userId)
+      const entryPrices = firstTrade?.priceAfter ?? []
+      const entryProbability = entryPrices[primaryOutcome] ?? 1 / (bet.outcomes.length || 2)
+
+      let wasFavorite = false
+      if (entryPrices.length > 0) {
+        const maxPrice = Math.max(...entryPrices)
+        wasFavorite = (entryPrices[primaryOutcome] ?? 0) >= maxPrice - 0.001
+      }
+
+      // Track running balance
+      const prevBalance = memberBalances.get(userId) ?? defaultBalance
+      const balanceAfter = prevBalance - pos.totalCost + payout
+      memberBalances.set(userId, balanceAfter)
+
+      const record: ResolvedBetRecord = {
+        betId: betDoc.id,
+        question: bet.question,
+        resolvedAt: bet.createdAt, // use bet createdAt as approximation
+        totalCost: pos.totalCost,
+        payout,
+        profit,
+        entryProbability,
+        primaryOutcome,
+        winningOutcome,
+        balanceAfter,
+        wasFavorite,
+      }
+
+      const existing = userRecords.get(userId) ?? []
+      existing.push(record)
+      userRecords.set(userId, existing)
+    }
+  }
+
+  // Write all stats docs
+  const batch = db.batch()
+  let count = 0
+  for (const [userId, records] of userRecords) {
+    const statsComputed = recomputeStats(records)
+    batch.set(marketRef.collection('stats').doc(userId), {
+      resolvedBets: records,
+      ...statsComputed,
+    })
+    count++
+  }
+  await batch.commit()
+
+  return { success: true, usersUpdated: count, betsProcessed: resolvedBetDocs.length }
 })

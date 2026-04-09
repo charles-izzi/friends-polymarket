@@ -35,6 +35,12 @@ service cloud.firestore {
           allow write: if false;
         }
       }
+
+      // Stats: market members can read all stats.
+      match /stats/{userId} {
+        allow read: if request.auth != null && isMember(marketId);
+        allow write: if false;
+      }
     }
 
     // CollectionGroup rule for 'members' — allows the collectionGroup query

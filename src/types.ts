@@ -50,6 +50,34 @@ export interface Trade {
   createdAt: Timestamp
 }
 
+export interface ResolvedBetRecord {
+  betId: string
+  question: string
+  resolvedAt: Timestamp
+  totalCost: number
+  payout: number
+  profit: number
+  entryProbability: number
+  primaryOutcome: number
+  winningOutcome: number
+  balanceAfter: number
+  wasFavorite: boolean
+}
+
+export interface UserStats {
+  resolvedBets: ResolvedBetRecord[]
+  totalResolved: number
+  wins: number
+  totalWagered: number
+  totalProfit: number
+  currentStreak: { type: 'win' | 'loss'; count: number }
+  bestBet: { betId: string; question: string; profit: number } | null
+  worstBet: { betId: string; question: string; profit: number } | null
+  biggestUpset: { betId: string; question: string; entryProbability: number; profit: number } | null
+  avgBetSize: number
+  favoriteRate: number
+}
+
 export type NotificationType =
   | 'bet_created'
   | 'bet_resolved'

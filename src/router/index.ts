@@ -31,6 +31,11 @@ const router = createRouter({
       component: () => import('@/views/BetDetailView.vue'),
     },
     {
+      path: '/stats',
+      name: 'stats',
+      component: () => import('@/views/PlayerStatsView.vue'),
+    },
+    {
       path: '/invite/:code',
       name: 'invite',
       component: () => import('@/views/InviteView.vue'),

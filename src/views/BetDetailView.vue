@@ -5,6 +5,8 @@ import { useBetsStore } from '@/stores/bets'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 import { calcCost, calcEffectiveB } from '@/utils/lmsr'
+import SvgLineChart from '@/components/SvgLineChart.vue'
+import type { ChartSeries } from '@/components/SvgLineChart.vue'
 import type { Bet } from '@/types'
 
 const route = useRoute()
@@ -188,8 +190,6 @@ async function handleCancel() {
 }
 
 // --- Chart ---
-const chartRef = ref<SVGSVGElement | null>(null)
-
 const OUTCOME_COLORS = [
   '#5b8fa8',
   '#c47a6a',
@@ -206,119 +206,37 @@ function getOutcomeColor(index: number): string {
   return OUTCOME_COLORS[index % OUTCOME_COLORS.length]!
 }
 
-interface ChartPoint {
-  prices: number[] // 0-1 per outcome
-}
-
-const chartPoints = computed<ChartPoint[]>(() => {
+const chartSeries = computed<ChartSeries[]>(() => {
   if (!bet.value) return []
   const n = bet.value.outcomes.length
-  const points: ChartPoint[] = []
 
-  // Initial point with equal prices
-  points.push({ prices: Array(n).fill(1 / n) })
+  // Build chronological price points per outcome
+  const points: number[][] = Array.from({ length: n }, () => [])
+
+  // Initial equal prices
+  for (let i = 0; i < n; i++) points[i]!.push((1 / n) * 100)
 
   // Trades are stored DESC — iterate in reverse for chronological order
   const trades = betsStore.trades
   for (let t = trades.length - 1; t >= 0; t--) {
     const trade = trades[t]!
-    points.push({ prices: trade.priceAfter.slice(0, n) })
-  }
-  return points
-})
-
-const SVG_W = 600
-const SVG_H = 180
-const PAD = { top: 6, right: 6, bottom: 22, left: 38 }
-const plotW = SVG_W - PAD.left - PAD.right
-const plotH = SVG_H - PAD.top - PAD.bottom
-
-const yTicks = [0, 25, 50, 75, 100]
-
-// Evenly-spaced X labels
-const xTicks = computed(() => {
-  const count = chartPoints.value.length
-  if (count < 2) return []
-  const maxLabels = Math.min(6, count)
-  const ticks: { x: number; label: string }[] = []
-  for (let i = 0; i < maxLabels; i++) {
-    const idx = Math.round((i * (count - 1)) / (maxLabels - 1))
-    ticks.push({
-      x: PAD.left + (idx / (count - 1)) * plotW,
-      label: idx === 0 ? 'Start' : `#${idx}`,
-    })
-  }
-  return ticks
-})
-
-const outcomeColors = computed(() => {
-  if (!bet.value) return []
-  return bet.value.outcomes.map((_, i) => getOutcomeColor(i))
-})
-
-const svgPaths = computed(() => {
-  const pts = chartPoints.value
-  if (pts.length < 2 || !bet.value) return []
-  const n = bet.value.outcomes.length
-  const last = pts.length - 1
-
-  return Array.from({ length: n }, (_, oi) => {
-    const d = pts
-      .map((p, pi) => {
-        const x = PAD.left + (pi / last) * plotW
-        const y = PAD.top + (1 - (p.prices[oi] ?? 0)) * plotH
-        return `${pi === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
-      })
-      .join(' ')
-    return { d, color: outcomeColors.value[oi] ?? '#999' }
-  })
-})
-
-// Hover
-const hoverIndex = ref<number | null>(null)
-
-const hoverInfo = computed(() => {
-  if (hoverIndex.value === null || !bet.value) return null
-  const pt = chartPoints.value[hoverIndex.value]
-  if (!pt) return null
-  const last = chartPoints.value.length - 1
-  const x = PAD.left + (hoverIndex.value / last) * plotW
-  return {
-    x,
-    prices: pt.prices.map((p, i) => ({
-      label: bet.value!.outcomes[i],
-      pct: (p * 100).toFixed(1),
-      color: outcomeColors.value[i] ?? '#999',
-    })),
-  }
-})
-
-function onChartMouseMove(e: MouseEvent) {
-  const svg = e.currentTarget as SVGSVGElement
-  const rect = svg.getBoundingClientRect()
-  const mouseX = ((e.clientX - rect.left) / rect.width) * SVG_W
-  const pts = chartPoints.value
-  if (pts.length < 2) {
-    hoverIndex.value = null
-    return
-  }
-  const last = pts.length - 1
-  let best = 0
-  let bestDist = Infinity
-  for (let i = 0; i <= last; i++) {
-    const px = PAD.left + (i / last) * plotW
-    const dist = Math.abs(px - mouseX)
-    if (dist < bestDist) {
-      bestDist = dist
-      best = i
+    for (let i = 0; i < n; i++) {
+      points[i]!.push((trade.priceAfter[i] ?? 0) * 100)
     }
   }
-  hoverIndex.value = best
-}
 
-function onChartMouseLeave() {
-  hoverIndex.value = null
-}
+  return bet.value.outcomes.map((label, i) => ({
+    label,
+    color: getOutcomeColor(i),
+    data: points[i]!,
+  }))
+})
+
+const chartLabels = computed(() => {
+  if (!bet.value) return []
+  const count = (chartSeries.value[0]?.data.length ?? 0)
+  return Array.from({ length: count }, (_, i) => (i === 0 ? 'Start' : `#${i}`))
+})
 
 onMounted(() => {
   if (!betsStore.bets.length) {
@@ -467,94 +385,13 @@ onUnmounted(() => {
       <v-window v-model="detailTab">
         <v-window-item value="chart">
           <div class="mb-4">
-            <template v-if="chartPoints.length >= 2">
-              <svg
-                ref="chartRef"
-                :viewBox="`0 0 ${SVG_W} ${SVG_H}`"
-                preserveAspectRatio="xMidYMid meet"
-                style="width: 100%; height: auto; display: block"
-                @mousemove="onChartMouseMove"
-                @mouseleave="onChartMouseLeave"
-              >
-                <!-- Y grid lines + labels -->
-                <template v-for="tick in yTicks" :key="tick">
-                  <line
-                    :x1="PAD.left"
-                    :x2="SVG_W - PAD.right"
-                    :y1="PAD.top + (1 - tick / 100) * plotH"
-                    :y2="PAD.top + (1 - tick / 100) * plotH"
-                    stroke="rgba(128,128,128,0.15)"
-                    stroke-width="1"
-                  />
-                  <text
-                    :x="PAD.left - 6"
-                    :y="PAD.top + (1 - tick / 100) * plotH + 5"
-                    text-anchor="end"
-                    class="chart-label"
-                  >
-                    {{ tick }}%
-                  </text>
-                </template>
-
-                <!-- X axis labels -->
-                <text
-                  v-for="(tick, ti) in xTicks"
-                  :key="ti"
-                  :x="tick.x"
-                  :y="SVG_H - 4"
-                  text-anchor="middle"
-                  class="chart-label"
-                >
-                  {{ tick.label }}
-                </text>
-
-                <!-- Price lines -->
-                <path
-                  v-for="(line, li) in svgPaths"
-                  :key="li"
-                  :d="line.d"
-                  :stroke="line.color"
-                  stroke-width="2.5"
-                  fill="none"
-                  stroke-linejoin="round"
-                  stroke-linecap="round"
-                />
-
-                <!-- Hover crosshair + dots + price labels -->
-                <template v-if="hoverInfo">
-                  <line
-                    :x1="hoverInfo.x"
-                    :x2="hoverInfo.x"
-                    :y1="PAD.top"
-                    :y2="PAD.top + plotH"
-                    stroke="rgba(128,128,128,0.4)"
-                    stroke-width="1"
-                    stroke-dasharray="4,3"
-                  />
-                  <template v-for="(p, pi) in hoverInfo.prices" :key="pi">
-                    <circle
-                      :cx="hoverInfo.x"
-                      :cy="PAD.top + (1 - parseFloat(p.pct) / 100) * plotH"
-                      r="4"
-                      :fill="p.color"
-                      stroke="white"
-                      stroke-width="1.5"
-                    />
-                    <text
-                      :x="hoverInfo.x + 7"
-                      :y="PAD.top + (1 - parseFloat(p.pct) / 100) * plotH + 4"
-                      class="chart-hover-label"
-                      :fill="p.color"
-                    >
-                      {{ p.pct }}%
-                    </text>
-                  </template>
-                </template>
-              </svg>
-            </template>
-            <p v-else class="text-body-2 text-medium-emphasis">
-              No trades yet — prices will appear here
-            </p>
+            <SvgLineChart
+              :series="chartSeries"
+              :labels="chartLabels"
+              :y-min="0"
+              :y-max="100"
+              :y-format="(v: number) => `${v.toFixed(0)}%`"
+            />
           </div>
         </v-window-item>
 
@@ -774,16 +611,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.chart-label {
-  font-size: 14px;
-  fill: rgba(128, 128, 128, 0.7);
-}
-
-.chart-hover-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .slider-shake {
   animation: shake 0.3s ease;
 }
