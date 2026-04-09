@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBetsStore } from '@/stores/bets'
 import { useAuthStore } from '@/stores/auth'
@@ -75,6 +75,61 @@ function statusColor(bet: Bet): string {
       return 'default'
   }
 }
+
+function hasStake(bet: Bet): boolean {
+  const uid = authStore.user?.uid
+  if (!uid) return false
+  const positions = betsStore.allPositions[bet.id]
+  const myPos = positions?.find((p) => p.userId === uid)
+  return !!myPos && myPos.shares.some((s) => s > 0)
+}
+
+const FILTERS_KEY = 'betListFilters'
+const savedFilters = localStorage.getItem(FILTERS_KEY)
+const filters = ref<string[]>(savedFilters ? JSON.parse(savedFilters) : ['open'])
+
+function toggleFilter(value: string) {
+  if (filters.value.includes(value)) {
+    filters.value = filters.value.filter((f) => f !== value)
+  } else {
+    filters.value = [...filters.value, value]
+  }
+  localStorage.setItem(FILTERS_KEY, JSON.stringify(filters.value))
+}
+
+const filteredBets = computed(() => {
+  return betsStore.bets.filter((bet) => {
+    const active = filters.value
+    if (active.length === 0) return true
+
+    const status = effectiveStatus(bet)
+
+    const statusFilters = active.filter((f) =>
+      ['open', 'closed', 'resolved', 'cancelled'].includes(f),
+    )
+    const hasStatusFilter = statusFilters.length > 0
+    const matchesStatus = !hasStatusFilter || statusFilters.includes(status)
+
+    const matchesStake = !active.includes('stake') || hasStake(bet)
+    const matchesCreator = !active.includes('creator') || bet.createdBy === authStore.user?.uid
+
+    return matchesStatus && matchesStake && matchesCreator
+  })
+})
+
+const sortedBets = computed(() => {
+  return [...filteredBets.value].sort((a, b) => {
+    const aStake = hasStake(a) ? 0 : 1
+    const bStake = hasStake(b) ? 0 : 1
+    if (aStake !== bStake) return aStake - bStake
+
+    const aOpen = effectiveStatus(a) === 'open' ? 0 : 1
+    const bOpen = effectiveStatus(b) === 'open' ? 0 : 1
+    if (aOpen !== bOpen) return aOpen - bOpen
+
+    return b.createdAt.toMillis() - a.createdAt.toMillis()
+  })
+})
 </script>
 
 <template>
@@ -89,6 +144,27 @@ function statusColor(bet: Bet): string {
       </v-btn>
     </div>
 
+    <div v-if="betsStore.bets.length > 5" class="d-flex flex-wrap ga-2 my-2">
+      <v-chip
+        v-for="filter in [
+          { value: 'stake', label: 'My Stakes', icon: 'mdi-circle-multiple' },
+          { value: 'creator', label: 'Created by Me', icon: 'mdi-gavel' },
+          { value: 'open', label: 'Open', icon: 'mdi-lock-open-variant-outline' },
+          { value: 'closed', label: 'Closed', icon: 'mdi-lock-outline' },
+          { value: 'resolved', label: 'Resolved', icon: 'mdi-check-circle-outline' },
+          { value: 'cancelled', label: 'Cancelled', icon: 'mdi-cancel' },
+        ]"
+        :key="filter.value"
+        :prepend-icon="filter.icon"
+        :variant="filters.includes(filter.value) ? 'flat' : 'outlined'"
+        :color="filters.includes(filter.value) ? 'primary' : undefined"
+        size="small"
+        @click="toggleFilter(filter.value)"
+      >
+        {{ filter.label }}
+      </v-chip>
+    </div>
+
     <v-progress-linear v-if="betsStore.loading" indeterminate class="mb-4" />
 
     <div v-if="!betsStore.loading && betsStore.bets.length === 0" class="text-center py-8">
@@ -99,7 +175,7 @@ function statusColor(bet: Bet): string {
     </div>
 
     <v-card
-      v-for="bet in betsStore.bets"
+      v-for="bet in sortedBets"
       :key="bet.id"
       class="mb-3 cursor-pointer"
       variant="outlined"
@@ -163,18 +239,48 @@ function statusColor(bet: Bet): string {
             </span>
           </div>
         </div>
-        <div class="d-flex flex-wrap ga-2 mt-1">
-          <div v-for="(outcome, i) in bet.outcomes" :key="i" class="d-flex align-center ga-1">
-            <div
-              :style="{
-                width: '10px',
-                height: '10px',
-                borderRadius: '2px',
-                backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
-              }"
-            />
-            <span class="text-caption">{{ outcome }}</span>
+        <div class="d-flex align-center mt-1">
+          <div class="d-flex flex-wrap ga-2 flex-grow-1">
+            <div v-for="(outcome, i) in bet.outcomes" :key="i" class="d-flex align-center ga-1">
+              <div
+                :style="{
+                  width: '10px',
+                  height: '10px',
+                  borderRadius: '2px',
+                  backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+                }"
+              />
+              <span class="text-caption">{{ outcome }}</span>
+            </div>
           </div>
+          <v-tooltip
+            v-if="bet.createdBy === authStore.user?.uid"
+            text="You created this bet"
+            location="top"
+          >
+            <template #activator="{ props }">
+              <v-icon
+                v-bind="props"
+                icon="mdi-gavel"
+                size="small"
+                color="info"
+                class="ml-2 mt-1"
+                @click.stop
+              />
+            </template>
+          </v-tooltip>
+          <v-tooltip v-if="hasStake(bet)" text="You have a stake in this bet" location="top">
+            <template #activator="{ props }">
+              <v-icon
+                v-bind="props"
+                icon="mdi-circle-multiple"
+                size="small"
+                color="warning"
+                class="ml-2 mt-1"
+                @click.stop
+              />
+            </template>
+          </v-tooltip>
         </div>
       </v-card-text>
     </v-card>

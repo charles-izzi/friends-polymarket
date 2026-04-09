@@ -57,12 +57,10 @@ export const useBetsStore = defineStore('bets', () => {
     if (!marketStore.market) return
     const mid = marketStore.market.id
 
-    const unresolvedIds = new Set(
-      bets.value.filter((b) => b.status === 'open' || b.status === 'closed').map((b) => b.id),
-    )
+    const activeIds = new Set(bets.value.map((b) => b.id))
 
     for (const [betId, unsub] of positionUnsubs) {
-      if (!unresolvedIds.has(betId)) {
+      if (!activeIds.has(betId)) {
         unsub()
         positionUnsubs.delete(betId)
         const { [betId]: _, ...rest } = allPositions.value
@@ -70,7 +68,7 @@ export const useBetsStore = defineStore('bets', () => {
       }
     }
 
-    for (const betId of unresolvedIds) {
+    for (const betId of activeIds) {
       if (!positionUnsubs.has(betId)) {
         const posRef = collection(db, 'markets', mid, 'bets', betId, 'positions')
         const unsub = onSnapshot(posRef, (snap) => {
@@ -388,6 +386,7 @@ export const useBetsStore = defineStore('bets', () => {
     openBets,
     closedBets,
     memberShares,
+    allPositions,
     getPrices,
     listenToBets,
     listenToBet,

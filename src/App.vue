@@ -148,7 +148,7 @@ onUnmounted(() => {
           <span class="text-body-2" :class="balance! < 0 ? 'text-error' : 'text-white'">
             {{ balanceDisplay }}
           </span>
-          <span class="text-caption text-white" style="opacity: 0.7; line-height: 1.1">
+          <span class="text-caption" style="color: #4a4a4a; line-height: 1.1">
             {{ currentUserShares }} shares
           </span>
         </div>
