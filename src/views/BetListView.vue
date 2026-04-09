@@ -127,7 +127,10 @@ const sortedBets = computed(() => {
     const bOpen = effectiveStatus(b) === 'open' ? 0 : 1
     if (aOpen !== bOpen) return aOpen - bOpen
 
-    return b.createdAt.toMillis() - a.createdAt.toMillis()
+    return (
+      b.createdAt.toMillis() - a.createdAt.toMillis() ||
+      a.closesAt.toMillis() - b.closesAt.toMillis()
+    )
   })
 })
 </script>
