@@ -36,8 +36,14 @@ export const useBetsStore = defineStore('bets', () => {
   const closedBets = computed(() => bets.value.filter((m) => m.status !== 'open'))
 
   const memberShares = computed(() => {
+    const activeBetIds = new Set(
+      bets.value
+        .filter((b) => b.status !== 'resolved' && b.status !== 'cancelled')
+        .map((b) => b.id),
+    )
     const result: Record<string, number> = {}
-    for (const positions of Object.values(allPositions.value)) {
+    for (const [betId, positions] of Object.entries(allPositions.value)) {
+      if (!activeBetIds.has(betId)) continue
       for (const pos of positions) {
         const total = pos.shares.reduce((sum, s) => sum + s, 0)
         result[pos.userId] = (result[pos.userId] ?? 0) + total
