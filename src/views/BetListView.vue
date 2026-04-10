@@ -84,6 +84,8 @@ function hasStake(bet: Bet): boolean {
   return !!myPos && myPos.shares.some((s) => s > 0)
 }
 
+const searchQuery = ref('')
+
 const FILTERS_KEY = 'betListFilters'
 const savedFilters = localStorage.getItem(FILTERS_KEY)
 const filters = ref<string[]>(savedFilters ? JSON.parse(savedFilters) : ['open'])
@@ -113,7 +115,10 @@ const filteredBets = computed(() => {
     const matchesStake = !active.includes('stake') || hasStake(bet)
     const matchesCreator = !active.includes('creator') || bet.createdBy === authStore.user?.uid
 
-    return matchesStatus && matchesStake && matchesCreator
+    const q = (searchQuery.value ?? '').trim().toLowerCase()
+    const matchesSearch = !q || bet.question.toLowerCase().includes(q)
+
+    return matchesStatus && matchesStake && matchesCreator && matchesSearch
   })
 })
 
@@ -147,7 +152,18 @@ const sortedBets = computed(() => {
       </v-btn>
     </div>
 
-    <div v-if="betsStore.bets.length > 5" class="d-flex flex-wrap ga-2 my-2">
+    <div v-if="betsStore.bets.length > 5" class="d-flex flex-wrap align-center ga-2 my-2">
+      <v-text-field
+        v-model="searchQuery"
+        placeholder="Search"
+        prepend-inner-icon="mdi-magnify"
+        density="compact"
+        variant="outlined"
+        hide-details
+        clearable
+        style="min-width: 150px; max-width: 150px"
+        rounded="pill"
+      />
       <v-chip
         v-for="filter in [
           { value: 'stake', label: 'My Stakes', icon: 'mdi-circle-multiple' },
