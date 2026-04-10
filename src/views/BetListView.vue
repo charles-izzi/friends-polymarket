@@ -128,8 +128,8 @@ const sortedBets = computed(() => {
     if (aOpen !== bOpen) return aOpen - bOpen
 
     return (
-      b.createdAt.toMillis() - a.createdAt.toMillis() ||
-      a.closesAt.toMillis() - b.closesAt.toMillis()
+      a.closesAt.toMillis() - b.closesAt.toMillis() ||
+      b.createdAt.toMillis() - a.createdAt.toMillis()
     )
   })
 })
