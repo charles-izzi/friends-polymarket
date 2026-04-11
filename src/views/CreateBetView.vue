@@ -35,13 +35,6 @@ const otherMembers = computed(() =>
   marketStore.members.filter((m) => m.userId !== authStore.user?.uid),
 )
 
-const minDateTime = computed(() => {
-  const d = new Date()
-  d.setMinutes(d.getMinutes() + 5)
-  // Format as YYYY-MM-DDTHH:mm for datetime-local input
-  return d.toISOString().slice(0, 16)
-})
-
 function addOutcome() {
   const val = customOutcome.value.trim()
   if (val && !outcomes.value.includes(val)) {
@@ -153,7 +146,6 @@ async function handleSubmit() {
         label="Betting closes at"
         type="datetime-local"
         variant="outlined"
-        :min="minDateTime"
         :disabled="submitting"
         :rules="closesAtRules"
         class="mb-2"

@@ -431,7 +431,14 @@ onUnmounted(() => {
           </div>
 
           <div class="px-3 py-2">
-            <div v-if="!drawerExpanded[betId] && (betsStore.bets.find(b => b.id === betId)?.commentCount ?? 0) > (drawerComments[betId]?.length ?? 0)" class="d-flex justify-center mb-1">
+            <div
+              v-if="
+                !drawerExpanded[betId] &&
+                (betsStore.bets.find((b) => b.id === betId)?.commentCount ?? 0) >
+                  (drawerComments[betId]?.length ?? 0)
+              "
+              class="d-flex justify-center mb-1"
+            >
               <v-btn
                 variant="text"
                 size="x-small"
@@ -469,7 +476,10 @@ onUnmounted(() => {
                     {{ comment.createdAt ? drawerCommentTimeAgo(comment.createdAt) : '' }}
                   </span>
                 </div>
-                <p class="text-body-2 ml-2" style="white-space: pre-wrap; word-break: break-word; margin-top: -1px">
+                <p
+                  class="text-body-2 ml-2"
+                  style="white-space: pre-wrap; word-break: break-word; margin-top: -1px"
+                >
                   {{ comment.text }}
                 </p>
               </div>
