@@ -206,6 +206,11 @@ function getOutcomeColor(index: number): string {
   return OUTCOME_COLORS[index % OUTCOME_COLORS.length]!
 }
 
+const betPositions = computed(() => {
+  const positions = betsStore.allPositions[betId.value] ?? []
+  return positions.filter((p) => p.totalCost > 0 || p.shares.some((s) => s > 0))
+})
+
 const chartSeries = computed<ChartSeries[]>(() => {
   if (!bet.value) return []
   const n = bet.value.outcomes.length
@@ -377,14 +382,17 @@ onUnmounted(() => {
         <v-tab value="chart">
           <v-icon>mdi-chart-line</v-icon>
         </v-tab>
-        <v-tab value="trades">
+        <v-tab value="holdings">
           <v-icon>mdi-swap-horizontal</v-icon>
+        </v-tab>
+        <v-tab value="trades">
+          <v-icon>mdi-history</v-icon>
         </v-tab>
       </v-tabs>
 
-      <v-window v-model="detailTab">
+      <v-window v-model="detailTab" class="mb-4">
         <v-window-item value="chart">
-          <div class="mb-4">
+          <div class="mt-2 mb-4" style="min-height: 180px">
             <SvgLineChart
               :series="chartSeries"
               :labels="chartLabels"
@@ -399,7 +407,7 @@ onUnmounted(() => {
           <table
             v-if="betsStore.trades.length > 0"
             class="text-body-2"
-            style="width: 100%; border-collapse: collapse"
+            style="width: 100%; border-collapse: collapse; table-layout: fixed"
           >
             <thead>
               <tr
@@ -408,10 +416,10 @@ onUnmounted(() => {
                   border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
                 "
               >
-                <th class="text-left py-1">User</th>
+                <th class="text-left py-1" style="width: 25%">Player</th>
                 <th class="text-left py-1">Action</th>
-                <th class="text-right py-1">Shares</th>
-                <th class="text-right py-1">Amount</th>
+                <th class="text-right py-1" style="width: 18%">Shares</th>
+                <th class="text-right py-1" style="width: 20%">Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -422,12 +430,43 @@ onUnmounted(() => {
                   border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
                 "
               >
-                <td class="py-1">{{ memberName(trade.userId) }}</td>
-                <td class="py-1">
-                  <span :class="trade.shares > 0 ? 'text-success' : 'text-error'">
-                    {{ trade.shares > 0 ? 'Buy' : 'Sell' }}
-                  </span>
-                  "{{ bet.outcomes[trade.outcomeIndex] }}"
+                <td class="py-1 truncate-cell">
+                  <v-menu
+                    open-on-hover
+                    open-on-click
+                    location="top"
+                    :close-on-content-click="false"
+                  >
+                    <template #activator="{ props }">
+                      <span v-bind="props" class="d-block text-truncate truncate-clickable">{{
+                        memberName(trade.userId)
+                      }}</span>
+                    </template>
+                    <v-card class="pa-2 text-caption">{{ memberName(trade.userId) }}</v-card>
+                  </v-menu>
+                </td>
+                <td class="py-1 truncate-cell">
+                  <v-menu
+                    open-on-hover
+                    open-on-click
+                    location="top"
+                    :close-on-content-click="false"
+                  >
+                    <template #activator="{ props }">
+                      <span v-bind="props" class="d-block text-truncate truncate-clickable">
+                        <span :class="trade.shares > 0 ? 'text-success' : 'text-error'">
+                          {{ trade.shares > 0 ? 'Buy' : 'Sell' }}
+                        </span>
+                        "{{ bet.outcomes[trade.outcomeIndex] }}"
+                      </span>
+                    </template>
+                    <v-card class="pa-2 text-caption">
+                      <span :class="trade.shares > 0 ? 'text-success' : 'text-error'">
+                        {{ trade.shares > 0 ? 'Buy' : 'Sell' }}
+                      </span>
+                      "{{ bet.outcomes[trade.outcomeIndex] }}"
+                    </v-card>
+                  </v-menu>
                 </td>
                 <td class="text-right py-1">{{ Math.abs(trade.shares).toFixed(1) }}</td>
                 <td class="text-right py-1">${{ Math.abs(trade.cost).toFixed(2) }}</td>
@@ -435,6 +474,73 @@ onUnmounted(() => {
             </tbody>
           </table>
           <p v-else class="text-body-2 text-medium-emphasis">No trades yet</p>
+        </v-window-item>
+
+        <v-window-item value="holdings">
+          <table
+            v-if="betPositions.length > 0"
+            class="text-body-2"
+            style="width: 100%; border-collapse: collapse"
+          >
+            <thead>
+              <tr
+                class="text-caption text-medium-emphasis"
+                style="
+                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                "
+              >
+                <th class="text-left py-1">Player</th>
+                <th
+                  v-for="(outcome, i) in bet.outcomes"
+                  :key="i"
+                  class="text-center py-1 holdings-th"
+                >
+                  <v-menu
+                    open-on-hover
+                    open-on-click
+                    location="top"
+                    :close-on-content-click="false"
+                  >
+                    <template #activator="{ props }">
+                      <span
+                        v-bind="props"
+                        class="d-inline-flex align-center ga-1 holdings-th-content"
+                      >
+                        <span
+                          :style="{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '2px',
+                            backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+                            flexShrink: 0,
+                          }"
+                        />
+                        <span class="text-truncate">{{ outcome }}</span>
+                      </span>
+                    </template>
+                    <v-card class="pa-2 text-caption">{{ outcome }}</v-card>
+                  </v-menu>
+                </th>
+                <th class="text-right py-1">Spent</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="pos in betPositions"
+                :key="pos.userId"
+                style="
+                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                "
+              >
+                <td class="py-1">{{ memberName(pos.userId) }}</td>
+                <td v-for="(outcome, i) in bet.outcomes" :key="i" class="text-center py-1">
+                  {{ (pos.shares[i] ?? 0).toFixed(1) }}
+                </td>
+                <td class="text-right py-1">${{ pos.totalCost.toFixed(2) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="text-body-2 text-medium-emphasis">No positions yet</p>
         </v-window-item>
       </v-window>
       <!-- Outcome prices -->
@@ -490,7 +596,7 @@ onUnmounted(() => {
         <v-card-title class="text-subtitle-1">Your Positions</v-card-title>
         <v-card-text>
           <div v-for="(outcome, i) in bet.outcomes" :key="i" class="mb-4">
-            <div class="d-flex align-center ga-2 mb-1">
+            <div class="d-flex align-center ga-2 mb-1" style="min-width: 0">
               <div
                 :style="{
                   width: '10px',
@@ -499,7 +605,17 @@ onUnmounted(() => {
                   backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
                 }"
               />
-              <span class="text-body-2 font-weight-medium">{{ outcome }}</span>
+              <v-menu open-on-hover open-on-click location="top" :close-on-content-click="false">
+                <template #activator="{ props }">
+                  <span
+                    v-bind="props"
+                    class="text-body-2 font-weight-medium text-truncate d-block truncate-clickable"
+                    style="min-width: 0"
+                    >{{ outcome }}</span
+                  >
+                </template>
+                <v-card class="pa-2 text-caption">{{ outcome }}</v-card>
+              </v-menu>
               <div class="ml-auto d-flex flex-column align-end" style="line-height: 1.2">
                 <div class="d-flex align-baseline ga-2">
                   <span class="text-caption text-medium-emphasis">
@@ -714,6 +830,25 @@ onUnmounted(() => {
 .pulse-shadow {
   animation: pulse-glow 1.5s ease-in-out infinite;
   border-radius: 50%;
+}
+
+.holdings-th {
+  max-width: 80px;
+}
+
+.holdings-th-content {
+  max-width: 100%;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.truncate-cell {
+  max-width: 0;
+  overflow: hidden;
+}
+
+.truncate-clickable {
+  cursor: pointer;
 }
 
 @keyframes pulse-glow {

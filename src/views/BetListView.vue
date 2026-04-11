@@ -88,13 +88,35 @@ const searchQuery = ref('')
 
 const FILTERS_KEY = 'betListFilters'
 const savedFilters = localStorage.getItem(FILTERS_KEY)
-const filters = ref<string[]>(savedFilters ? JSON.parse(savedFilters) : ['open'])
+const filters = ref<string[]>(savedFilters ? JSON.parse(savedFilters) : ['open', '!stake'])
+
+const TRISTATE_FILTERS = ['stake', 'creator']
+const STATUS_VALUES = ['open', 'closed', 'resolved', 'cancelled']
+
+function filterState(value: string): 'off' | 'include' | 'exclude' {
+  if (filters.value.includes(value)) return 'include'
+  if (filters.value.includes(`!${value}`)) return 'exclude'
+  return 'off'
+}
 
 function toggleFilter(value: string) {
-  if (filters.value.includes(value)) {
-    filters.value = filters.value.filter((f) => f !== value)
-  } else {
-    filters.value = [...filters.value, value]
+  if (TRISTATE_FILTERS.includes(value)) {
+    const state = filterState(value)
+    const cleaned = filters.value.filter((f) => f !== value && f !== `!${value}`)
+    if (state === 'off') {
+      filters.value = [...cleaned, value]
+    } else if (state === 'include') {
+      filters.value = [...cleaned, `!${value}`]
+    } else {
+      filters.value = cleaned
+    }
+  } else if (STATUS_VALUES.includes(value)) {
+    const otherFilters = filters.value.filter((f) => !STATUS_VALUES.includes(f))
+    if (filters.value.includes(value)) {
+      filters.value = otherFilters
+    } else {
+      filters.value = [...otherFilters, value]
+    }
   }
   localStorage.setItem(FILTERS_KEY, JSON.stringify(filters.value))
 }
@@ -112,8 +134,18 @@ const filteredBets = computed(() => {
     const hasStatusFilter = statusFilters.length > 0
     const matchesStatus = !hasStatusFilter || statusFilters.includes(status)
 
-    const matchesStake = !active.includes('stake') || hasStake(bet)
-    const matchesCreator = !active.includes('creator') || bet.createdBy === authStore.user?.uid
+    const matchesStake =
+      filterState('stake') === 'off'
+        ? true
+        : filterState('stake') === 'include'
+          ? hasStake(bet)
+          : !hasStake(bet)
+    const matchesCreator =
+      filterState('creator') === 'off'
+        ? true
+        : filterState('creator') === 'include'
+          ? bet.createdBy === authStore.user?.uid
+          : bet.createdBy !== authStore.user?.uid
 
     const q = (searchQuery.value ?? '').trim().toLowerCase()
     const matchesSearch = !q || bet.question.toLowerCase().includes(q)
@@ -124,10 +156,6 @@ const filteredBets = computed(() => {
 
 const sortedBets = computed(() => {
   return [...filteredBets.value].sort((a, b) => {
-    const aStake = hasStake(a) ? 0 : 1
-    const bStake = hasStake(b) ? 0 : 1
-    if (aStake !== bStake) return aStake - bStake
-
     const aOpen = effectiveStatus(a) === 'open' ? 0 : 1
     const bOpen = effectiveStatus(b) === 'open' ? 0 : 1
     if (aOpen !== bOpen) return aOpen - bOpen
@@ -168,20 +196,41 @@ const sortedBets = computed(() => {
         v-for="filter in [
           { value: 'stake', label: 'My Stakes', icon: 'mdi-circle-multiple' },
           { value: 'creator', label: 'Created by Me', icon: 'mdi-gavel' },
-          { value: 'open', label: 'Open', icon: 'mdi-lock-open-variant-outline' },
-          { value: 'closed', label: 'Closed', icon: 'mdi-lock-outline' },
-          { value: 'resolved', label: 'Resolved', icon: 'mdi-check-circle-outline' },
-          { value: 'cancelled', label: 'Cancelled', icon: 'mdi-cancel' },
         ]"
         :key="filter.value"
         :prepend-icon="filter.icon"
-        :variant="filters.includes(filter.value) ? 'flat' : 'outlined'"
-        :color="filters.includes(filter.value) ? 'primary' : undefined"
+        :variant="filterState(filter.value) !== 'off' ? 'flat' : 'outlined'"
+        :color="
+          filterState(filter.value) === 'include'
+            ? 'success'
+            : filterState(filter.value) === 'exclude'
+              ? 'error'
+              : undefined
+        "
         size="small"
         @click="toggleFilter(filter.value)"
       >
         {{ filter.label }}
       </v-chip>
+      <div class="status-filter-group d-flex align-center ga-1 px-2 py-1">
+        <span class="status-filter-label">Status</span>
+        <v-chip
+          v-for="filter in [
+            { value: 'open', label: 'Open', icon: 'mdi-lock-open-variant-outline' },
+            { value: 'closed', label: 'Closed', icon: 'mdi-lock-outline' },
+            { value: 'resolved', label: 'Resolved', icon: 'mdi-check-circle-outline' },
+            { value: 'cancelled', label: 'Cancelled', icon: 'mdi-cancel' },
+          ]"
+          :key="filter.value"
+          :prepend-icon="filter.icon"
+          :variant="filters.includes(filter.value) ? 'flat' : 'outlined'"
+          :color="filters.includes(filter.value) ? 'primary' : undefined"
+          size="small"
+          @click="toggleFilter(filter.value)"
+        >
+          {{ filter.label }}
+        </v-chip>
+      </div>
     </div>
 
     <v-progress-linear v-if="betsStore.loading" indeterminate class="mb-4" />
@@ -305,3 +354,22 @@ const sortedBets = computed(() => {
     </v-card>
   </v-container>
 </template>
+
+<style scoped>
+.status-filter-group {
+  border: thin solid rgba(var(--v-theme-on-surface), 0.38);
+  border-radius: 8px;
+  position: relative;
+}
+
+.status-filter-label {
+  position: absolute;
+  top: -8px;
+  left: 8px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 4px;
+  background: rgb(var(--v-theme-background));
+  color: rgba(var(--v-theme-on-surface), 0.6);
+}
+</style>
