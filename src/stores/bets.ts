@@ -14,6 +14,7 @@ export const useBetsStore = defineStore('bets', () => {
   const currentPosition = ref<Position | null>(null)
   const trades = ref<Trade[]>([])
   const loading = ref(false)
+  const positionsReady = ref(false)
   const error = ref('')
 
   const functions = getFunctions()
@@ -74,15 +75,32 @@ export const useBetsStore = defineStore('bets', () => {
       }
     }
 
+    const newBetIds: string[] = []
     for (const betId of activeIds) {
       if (!positionUnsubs.has(betId)) {
+        newBetIds.push(betId)
+      }
+    }
+
+    if (newBetIds.length > 0) {
+      positionsReady.value = false
+      let pending = newBetIds.length
+      for (const betId of newBetIds) {
+        let firstSnapshot = true
         const posRef = collection(db, 'markets', mid, 'bets', betId, 'positions')
         const unsub = onSnapshot(posRef, (snap) => {
           const positions = snap.docs.map((d) => ({ userId: d.id, ...d.data() }) as Position)
           allPositions.value = { ...allPositions.value, [betId]: positions }
+          if (firstSnapshot) {
+            firstSnapshot = false
+            pending--
+            if (pending === 0) positionsReady.value = true
+          }
         })
         positionUnsubs.set(betId, unsub)
       }
+    } else {
+      positionsReady.value = true
     }
   }
 
@@ -388,6 +406,7 @@ export const useBetsStore = defineStore('bets', () => {
     currentPosition,
     trades,
     loading,
+    positionsReady,
     error,
     openBets,
     closedBets,

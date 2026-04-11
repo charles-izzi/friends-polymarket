@@ -44,7 +44,17 @@ const pnlSeries = computed<ChartSeries[]>(() => {
 
 const pnlLabels = computed(() => {
   if (!stats.value?.resolvedBets.length) return []
-  const labels = ['Start']
+  const member = marketStore.members.find((m) => m.userId === targetUserId.value)
+  let startLabel = 'Start'
+  if (member?.joinedAt) {
+    const jts =
+      typeof member.joinedAt === 'number'
+        ? member.joinedAt
+        : (member.joinedAt as { seconds: number }).seconds * 1000
+    const jd = new Date(jts)
+    startLabel = `${jd.getMonth() + 1}/${jd.getDate()}`
+  }
+  const labels = [startLabel]
   for (const r of stats.value.resolvedBets) {
     const ts =
       typeof r.resolvedAt === 'number'
@@ -133,7 +143,7 @@ function fmtPct(v: number): string {
       <!-- Current Holdings -->
       <v-card v-if="currentHoldings.length > 0" variant="outlined" class="mb-4">
         <div class="text-caption text-medium-emphasis pa-3 pb-0">Current Holdings</div>
-        <v-table density="compact">
+        <v-table density="compact" class="mt-2 mx-3 mb-3">
           <thead>
             <tr>
               <th class="text-left">Bet</th>
@@ -142,7 +152,12 @@ function fmtPct(v: number): string {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="h in currentHoldings" :key="`${h.betId}-${h.outcome}`">
+            <tr
+              v-for="h in currentHoldings"
+              :key="`${h.betId}-${h.outcome}`"
+              class="clickable-row"
+              @click="router.push(`/bets/${h.betId}`)"
+            >
               <td class="text-body-2" style="max-width: 180px">
                 <span class="d-inline-block text-truncate" style="max-width: 100%">
                   {{ h.question }}
@@ -165,7 +180,7 @@ function fmtPct(v: number): string {
         <!-- Resolved Bets -->
         <v-card variant="outlined" class="mb-4">
           <div class="text-caption text-medium-emphasis pa-3 pb-0">Resolved Bets</div>
-          <v-table density="compact">
+          <v-table density="compact" class="mt-2 mx-3 mb-3">
             <thead>
               <tr>
                 <th class="text-left">Bet</th>
@@ -184,7 +199,12 @@ function fmtPct(v: number): string {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="r in stats!.resolvedBets" :key="r.betId">
+              <tr
+                v-for="r in stats!.resolvedBets"
+                :key="r.betId"
+                class="clickable-row"
+                @click="router.push(`/bets/${r.betId}`)"
+              >
                 <td class="text-body-2" style="max-width: 200px">
                   <span class="d-inline-block text-truncate" style="max-width: 100%">
                     {{ r.question }}
@@ -222,6 +242,7 @@ function fmtPct(v: number): string {
             </v-btn>
           </div>
           <SvgLineChart
+            class="mt-2"
             :series="pnlSeries"
             :labels="pnlLabels"
             :y-min="pnlYMin"
@@ -413,6 +434,12 @@ function fmtPct(v: number): string {
 </template>
 
 <style scoped>
+.clickable-row {
+  cursor: pointer;
+}
+.clickable-row:hover {
+  background: rgba(var(--v-theme-on-surface), 0.04);
+}
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
