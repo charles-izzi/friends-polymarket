@@ -32,6 +32,15 @@ export interface Bet {
   liquidityParam: number
   sharesSold: number[]
   totalVolume: number
+  commentCount: number
+  lastCommentAt: Timestamp | null
+}
+
+export interface Comment {
+  id: string
+  userId: string
+  text: string
+  createdAt: Timestamp
 }
 
 export interface Position {

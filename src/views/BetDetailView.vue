@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useBetsStore } from '@/stores/bets'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
+import { useCommentsStore } from '@/stores/comments'
 import { calcCost, calcEffectiveB, calcPrices } from '@/utils/lmsr'
 import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
@@ -13,6 +14,7 @@ const router = useRouter()
 const betsStore = useBetsStore()
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
+const commentsStore = useCommentsStore()
 
 const betId = computed(() => route.params.id as string)
 const bet = computed(() => betsStore.bets.find((m) => m.id === betId.value) ?? null)
@@ -28,6 +30,8 @@ const detailTab = ref('chart')
 
 const now = ref(Date.now())
 let nowInterval: ReturnType<typeof setInterval> | null = null
+
+const newCommentText = ref('')
 
 const effectiveStatus = computed(() => {
   if (!bet.value) return 'open'
@@ -249,16 +253,56 @@ const chartLabels = computed(() => {
   return Array.from({ length: count }, (_, i) => (i === 0 ? 'Start' : `#${i}`))
 })
 
+function commentTimeAgo(ts: import('firebase/firestore').Timestamp): string {
+  const diff = Date.now() - ts.toDate().getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+async function handlePostComment() {
+  const text = newCommentText.value.trim()
+  if (!text) return
+  try {
+    await commentsStore.addComment(betId.value, text)
+    newCommentText.value = ''
+  } catch {
+    // error is set in store
+  }
+}
+
+function setupBetListeners(id: string) {
+  betsStore.listenToBet(id)
+  commentsStore.listenToComments(id)
+  commentsStore.markSeen(id)
+  userEdited.value = false
+}
+
 onMounted(() => {
   if (!betsStore.bets.length) {
     betsStore.listenToBets()
   }
-  betsStore.listenToBet(betId.value)
+  setupBetListeners(betId.value)
   nowInterval = setInterval(() => (now.value = Date.now()), 60000)
+})
+
+// Re-establish listeners when navigating between bet detail pages
+watch(betId, (newId, oldId) => {
+  if (newId === oldId) return
+  betsStore.stopListeningToBet()
+  commentsStore.stopListening()
+  commentsStore.markSeen(oldId)
+  setupBetListeners(newId)
 })
 
 onUnmounted(() => {
   betsStore.stopListeningToBet()
+  commentsStore.stopListening()
+  commentsStore.markSeen(betId.value)
   if (nowInterval) clearInterval(nowInterval)
 })
 </script>
@@ -766,6 +810,81 @@ onUnmounted(() => {
 
           <v-alert v-if="betsStore.error" type="error" variant="tonal" class="mt-3">
             {{ betsStore.error }}
+          </v-alert>
+        </v-card-text>
+      </v-card>
+
+      <!-- Comments -->
+      <v-card class="mb-4" variant="outlined">
+        <v-card-title class="text-subtitle-1 d-flex align-center">
+          Comments
+          <v-chip
+            v-if="bet.commentCount"
+            size="x-small"
+            color="secondary"
+            variant="tonal"
+            class="ml-2"
+          >
+            {{ bet.commentCount ?? 0 }}
+          </v-chip>
+        </v-card-title>
+        <v-card-text>
+          <div
+            v-if="commentsStore.comments.length > 0"
+            class="comments-list mb-3"
+            style="max-height: 400px; overflow-y: auto"
+          >
+            <div
+              v-for="comment in commentsStore.comments"
+              :key="comment.id"
+              class="d-flex ga-2 py-2"
+              style="border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity))"
+            >
+              <div class="flex-grow-1" style="min-width: 0">
+                <div class="d-flex align-center ga-2">
+                  <span class="text-caption font-weight-bold">{{
+                    memberName(comment.userId)
+                  }}</span>
+                  <span class="text-caption text-medium-emphasis">
+                    {{ comment.createdAt ? commentTimeAgo(comment.createdAt) : '' }}
+                  </span>
+                </div>
+                <p class="text-body-2 mt-1" style="white-space: pre-wrap; word-break: break-word">
+                  {{ comment.text }}
+                </p>
+              </div>
+            </div>
+          </div>
+          <p v-else class="text-body-2 text-medium-emphasis mb-3">No comments yet</p>
+
+          <div class="d-flex align-center ga-2">
+            <v-text-field
+              v-model="newCommentText"
+              placeholder="Write a comment..."
+              variant="outlined"
+              density="compact"
+              hide-details
+              :maxlength="500"
+              @keydown.enter.prevent="handlePostComment"
+            />
+            <v-btn
+              icon="mdi-send"
+              color="primary"
+              variant="tonal"
+              size="small"
+              :loading="commentsStore.submitting"
+              :disabled="!newCommentText.trim() || commentsStore.submitting"
+              @click="handlePostComment"
+            />
+          </div>
+          <v-alert
+            v-if="commentsStore.error"
+            type="error"
+            variant="tonal"
+            class="mt-2"
+            density="compact"
+          >
+            {{ commentsStore.error }}
           </v-alert>
         </v-card-text>
       </v-card>

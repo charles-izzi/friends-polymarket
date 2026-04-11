@@ -847,6 +847,60 @@ export const cancelBet = onCall(async (request) => {
   return { success: true }
 })
 
+export const addComment = onCall(async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
+
+  const { marketId, betId, text, database } = request.data as {
+    marketId: string
+    betId: string
+    text: string
+    database?: string
+  }
+  const db = getDb(database)
+
+  if (!marketId || !betId) {
+    throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')
+  }
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    throw new HttpsError('invalid-argument', 'Comment text is required')
+  }
+  if (text.trim().length > 500) {
+    throw new HttpsError('invalid-argument', 'Comment must be 500 characters or fewer')
+  }
+
+  const marketRef = db.collection('markets').doc(marketId)
+  const betRef = marketRef.collection('bets').doc(betId)
+
+  // Verify membership
+  const memberDoc = await marketRef.collection('members').doc(uid).get()
+  if (!memberDoc.exists) {
+    throw new HttpsError('permission-denied', 'You are not a member of this market')
+  }
+
+  // Verify bet exists
+  const betDoc = await betRef.get()
+  if (!betDoc.exists) {
+    throw new HttpsError('not-found', 'Bet not found')
+  }
+
+  // Write comment and update bet atomically
+  const commentRef = betRef.collection('comments').doc()
+  const batch = db.batch()
+  batch.set(commentRef, {
+    userId: uid,
+    text: text.trim(),
+    createdAt: FieldValue.serverTimestamp(),
+  })
+  batch.update(betRef, {
+    commentCount: FieldValue.increment(1),
+    lastCommentAt: FieldValue.serverTimestamp(),
+  })
+  await batch.commit()
+
+  return { commentId: commentRef.id }
+})
+
 export const checkResolutionNeeded = onSchedule('every 5 minutes', async () => {
   const now = Timestamp.now()
 

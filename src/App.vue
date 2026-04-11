@@ -4,18 +4,100 @@ import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 import { useBetsStore } from '@/stores/bets'
 import { useNotificationsStore } from '@/stores/notifications'
+import { useCommentsStore } from '@/stores/comments'
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useDevDb } from '@/firebase'
+import type { Comment } from '@/types'
 
 const authStore = useAuthStore()
 const marketStore = useMarketStore()
 const betsStore = useBetsStore()
 const notificationsStore = useNotificationsStore()
+const commentsStore = useCommentsStore()
 const router = useRouter()
 
 const drawer = ref(false)
 const userMenu = ref(false)
 const devDb = ref(useDevDb)
+
+// --- New Messages drawer ---
+const messagesDrawer = ref(false)
+const drawerBetIds = ref<string[]>([])
+const drawerComments = ref<Record<string, Comment[]>>({})
+const drawerLastSeenAt = ref<Record<string, number>>({})
+const drawerExpanded = ref<Record<string, boolean>>({})
+const drawerLoading = ref(false)
+
+const showFab = computed(
+  () => authStore.isAuthenticated && marketStore.hasMarket && commentsStore.unseenCount > 0,
+)
+
+async function openMessagesDrawer() {
+  const betIds = [...commentsStore.unseenBetIds]
+  // Snapshot the lastSeenAt before marking all seen
+  const seenSnapshot: Record<string, number> = {}
+  for (const id of betIds) {
+    seenSnapshot[id] = commentsStore.getLastSeenAt(id)
+  }
+  drawerLastSeenAt.value = seenSnapshot
+  drawerBetIds.value = betIds
+  drawerExpanded.value = {}
+
+  // Mark all as read immediately
+  commentsStore.markAllSeen()
+
+  // Open drawer and fetch recent comments
+  messagesDrawer.value = true
+  drawerLoading.value = true
+  const results: Record<string, Comment[]> = {}
+  await Promise.all(
+    betIds.map(async (betId) => {
+      results[betId] = await commentsStore.fetchRecentComments(betId, 3)
+    }),
+  )
+  drawerComments.value = results
+  drawerLoading.value = false
+}
+
+async function expandBetComments(betId: string) {
+  const all = await commentsStore.fetchAllComments(betId)
+  drawerComments.value = { ...drawerComments.value, [betId]: all }
+  drawerExpanded.value = { ...drawerExpanded.value, [betId]: true }
+}
+
+function collapseBetComments(betId: string) {
+  drawerExpanded.value = { ...drawerExpanded.value, [betId]: false }
+}
+
+function isNewComment(betId: string, comment: Comment): boolean {
+  if (!comment.createdAt) return false
+  const seenAt = drawerLastSeenAt.value[betId] ?? 0
+  return comment.createdAt.toDate().getTime() > seenAt
+}
+
+function drawerCommentTimeAgo(ts: import('firebase/firestore').Timestamp): string {
+  const diff = Date.now() - ts.toDate().getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+function drawerMemberName(userId: string): string {
+  return marketStore.members.find((m) => m.userId === userId)?.displayName ?? 'Unknown'
+}
+
+function navigateToBet(betId: string) {
+  messagesDrawer.value = false
+  router.push(`/bets/${betId}`)
+}
+
+function betQuestion(betId: string): string {
+  return betsStore.bets.find((b) => b.id === betId)?.question ?? 'Unknown bet'
+}
 
 // PWA Install banner
 const deferredPrompt = ref<Event | null>(null)
@@ -305,5 +387,96 @@ onUnmounted(() => {
         />
       </template>
     </v-snackbar>
+
+    <!-- New Messages FAB -->
+    <v-btn
+      v-if="showFab"
+      icon
+      color="secondary"
+      size="large"
+      style="position: fixed; bottom: 24px; right: 24px; z-index: 1000"
+      @click="openMessagesDrawer"
+    >
+      <v-badge :content="commentsStore.unseenCount" color="error" floating>
+        <v-icon>mdi-message-text</v-icon>
+      </v-badge>
+    </v-btn>
+
+    <!-- New Messages Drawer -->
+    <v-navigation-drawer v-model="messagesDrawer" location="right" temporary width="360">
+      <v-list-subheader class="text-uppercase font-weight-bold px-4 pt-3">
+        New Messages
+      </v-list-subheader>
+
+      <v-progress-linear v-if="drawerLoading" indeterminate class="mb-2" />
+
+      <div
+        v-if="drawerBetIds.length === 0 && !drawerLoading"
+        class="pa-4 text-center text-medium-emphasis"
+      >
+        No new messages
+      </div>
+
+      <div v-for="betId in drawerBetIds" :key="betId" class="px-3 mb-2">
+        <v-card variant="outlined" class="pa-0">
+          <div
+            class="d-flex align-center px-3 py-2 cursor-pointer"
+            style="border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity))"
+            @click="navigateToBet(betId)"
+          >
+            <div class="flex-grow-1" style="min-width: 0">
+              <p class="text-caption font-weight-medium text-truncate">{{ betQuestion(betId) }}</p>
+            </div>
+            <v-icon icon="mdi-chevron-right" size="small" class="ml-2 flex-shrink-0" />
+          </div>
+
+          <div class="px-3 py-2">
+            <div v-if="!drawerExpanded[betId] && (betsStore.bets.find(b => b.id === betId)?.commentCount ?? 0) > (drawerComments[betId]?.length ?? 0)" class="d-flex justify-center mb-1">
+              <v-btn
+                variant="text"
+                size="x-small"
+                prepend-icon="mdi-chevron-up"
+                @click.stop="expandBetComments(betId)"
+              >
+                Load earlier comments
+              </v-btn>
+            </div>
+
+            <div
+              v-for="comment in drawerComments[betId] ?? []"
+              :key="comment.id"
+              class="d-flex align-start ga-1 mb-1"
+            >
+              <div
+                v-if="isNewComment(betId, comment)"
+                style="
+                  width: 6px;
+                  height: 6px;
+                  border-radius: 50%;
+                  background-color: rgb(var(--v-theme-info));
+                  flex-shrink: 0;
+                  margin-top: 9px;
+                  margin-right: 4px;
+                "
+              />
+              <div v-else style="width: 6px; flex-shrink: 0; margin-right: 4px" />
+              <div class="flex-grow-1" style="min-width: 0">
+                <div class="d-flex align-center justify-space-between">
+                  <span class="text-caption text-medium-emphasis" style="opacity: 0.6">{{
+                    drawerMemberName(comment.userId)
+                  }}</span>
+                  <span class="text-caption text-medium-emphasis" style="opacity: 0.6">
+                    {{ comment.createdAt ? drawerCommentTimeAgo(comment.createdAt) : '' }}
+                  </span>
+                </div>
+                <p class="text-body-2 ml-2" style="white-space: pre-wrap; word-break: break-word; margin-top: -1px">
+                  {{ comment.text }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </v-card>
+      </div>
+    </v-navigation-drawer>
   </v-app>
 </template>

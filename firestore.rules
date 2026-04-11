@@ -34,6 +34,11 @@ service cloud.firestore {
           allow read: if request.auth != null && isMember(marketId);
           allow write: if false;
         }
+
+        match /comments/{commentId} {
+          allow read: if request.auth != null && isMember(marketId);
+          allow write: if false;
+        }
       }
 
       // Stats: market members can read all stats.

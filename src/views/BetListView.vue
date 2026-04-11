@@ -3,11 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBetsStore } from '@/stores/bets'
 import { useAuthStore } from '@/stores/auth'
+import { useCommentsStore } from '@/stores/comments'
 import type { Bet } from '@/types'
 
 const router = useRouter()
 const betsStore = useBetsStore()
 const authStore = useAuthStore()
+const commentsStore = useCommentsStore()
 
 const OUTCOME_COLORS = [
   '#5b8fa8',
@@ -96,7 +98,7 @@ const FILTERS_KEY = 'betListFilters'
 const savedFilters = localStorage.getItem(FILTERS_KEY)
 const filters = ref<string[]>(savedFilters ? JSON.parse(savedFilters) : ['open', '!stake'])
 
-const TRISTATE_FILTERS = ['stake', 'creator']
+const TRISTATE_FILTERS = ['stake', 'creator', 'comments']
 const STATUS_VALUES = ['open', 'closed', 'resolved', 'cancelled']
 
 function filterState(value: string): 'off' | 'include' | 'exclude' {
@@ -152,11 +154,17 @@ const filteredBets = computed(() => {
         : filterState('creator') === 'include'
           ? bet.createdBy === authStore.user?.uid
           : bet.createdBy !== authStore.user?.uid
+    const matchesComments =
+      filterState('comments') === 'off'
+        ? true
+        : filterState('comments') === 'include'
+          ? (bet.commentCount ?? 0) > 0
+          : (bet.commentCount ?? 0) === 0
 
     const q = (searchQuery.value ?? '').trim().toLowerCase()
     const matchesSearch = !q || bet.question.toLowerCase().includes(q)
 
-    return matchesStatus && matchesStake && matchesCreator && matchesSearch
+    return matchesStatus && matchesStake && matchesCreator && matchesComments && matchesSearch
   })
 })
 
@@ -202,6 +210,7 @@ const sortedBets = computed(() => {
         v-for="filter in [
           { value: 'stake', label: 'My Stakes', icon: 'mdi-circle-multiple' },
           { value: 'creator', label: 'Created by Me', icon: 'mdi-gavel' },
+          { value: 'comments', label: 'Has Comments', icon: 'mdi-message-text' },
         ]"
         :key="filter.value"
         :prepend-icon="filter.icon"
@@ -358,6 +367,35 @@ const sortedBets = computed(() => {
                   icon="mdi-circle-multiple"
                   size="small"
                   color="warning"
+                  class="ml-2 mt-1"
+                  @click.stop
+                />
+              </template>
+            </v-tooltip>
+            <v-tooltip v-if="(bet.commentCount ?? 0) > 0" text="Has comments" location="top">
+              <template #activator="{ props }">
+                <v-badge
+                  v-if="commentsStore.isUnseen(bet.id)"
+                  dot
+                  color="error"
+                  offset-x="-2"
+                  offset-y="-2"
+                >
+                  <v-icon
+                    v-bind="props"
+                    icon="mdi-message-text"
+                    size="small"
+                    color="secondary"
+                    class="ml-2 mt-1"
+                    @click.stop
+                  />
+                </v-badge>
+                <v-icon
+                  v-else
+                  v-bind="props"
+                  icon="mdi-message-text"
+                  size="small"
+                  color="secondary"
                   class="ml-2 mt-1"
                   @click.stop
                 />
