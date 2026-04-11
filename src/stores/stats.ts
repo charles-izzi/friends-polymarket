@@ -13,14 +13,16 @@ export const useStatsStore = defineStore('stats', () => {
 
   let unsubMyStats: (() => void) | null = null
 
-  function listenToMyStats() {
+  function listenToStats(userId?: string) {
     cleanup()
     const marketStore = useMarketStore()
     const authStore = useAuthStore()
-    if (!marketStore.market || !authStore.user) return
+    if (!marketStore.market) return
+    const uid = userId || authStore.user?.uid
+    if (!uid) return
 
     loading.value = true
-    const statsRef = doc(db, 'markets', marketStore.market.id, 'stats', authStore.user.uid)
+    const statsRef = doc(db, 'markets', marketStore.market.id, 'stats', uid)
 
     unsubMyStats = onSnapshot(statsRef, (snap) => {
       myStats.value = snap.exists() ? (snap.data() as UserStats) : null
@@ -44,10 +46,12 @@ export const useStatsStore = defineStore('stats', () => {
   const cumulativePnL = computed(() => {
     if (!myStats.value?.resolvedBets.length) return []
     let running = 0
-    return myStats.value.resolvedBets.map((r) => {
+    const result = [0]
+    for (const r of myStats.value.resolvedBets) {
       running += r.profit
-      return running
-    })
+      result.push(running)
+    }
+    return result
   })
 
   /** For each resolved-bet timestamp, compute rank of each member by balanceAfter */
@@ -128,7 +132,7 @@ export const useStatsStore = defineStore('stats', () => {
     myStats,
     allMemberStats,
     loading,
-    listenToMyStats,
+    listenToStats,
     loadAllStats,
     cumulativePnL,
     leaderboardRankHistory,

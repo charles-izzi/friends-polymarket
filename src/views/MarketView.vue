@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { useMarketStore } from '@/stores/market'
 import { useBetsStore } from '@/stores/bets'
+import { useStatsStore } from '@/stores/stats'
+import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 import { computed, ref, onMounted } from 'vue'
 import type { Bet } from '@/types'
+import SvgLineChart from '@/components/SvgLineChart.vue'
+import type { ChartSeries } from '@/components/SvgLineChart.vue'
 
 const marketStore = useMarketStore()
 const betsStore = useBetsStore()
+const statsStore = useStatsStore()
+const authStore = useAuthStore()
 const router = useRouter()
+
+const leaderboardTab = ref('current')
 
 onMounted(() => {
   betsStore.listenToBets()
+  statsStore.loadAllStats()
 })
 
 const copied = ref(false)
@@ -63,7 +72,49 @@ function statusColor(bet: Bet): string {
   }
 }
 
-const sortedMembers = computed(() => [...marketStore.members].sort((a, b) => b.balance - a.balance))
+const memberPnL = computed(() => {
+  const map: Record<string, number> = {}
+  for (const [uid, s] of Object.entries(statsStore.allMemberStats)) {
+    map[uid] = s.totalProfit
+  }
+  return map
+})
+
+const sortedMembers = computed(() =>
+  [...marketStore.members].sort(
+    (a, b) => (memberPnL.value[b.userId] ?? 0) - (memberPnL.value[a.userId] ?? 0),
+  ),
+)
+
+// --- Leaderboard Rank Over Time ---
+const MEMBER_COLORS = [
+  '#5b8fa8',
+  '#c47a6a',
+  '#b5944f',
+  '#7a9a6d',
+  '#9b7db8',
+  '#6a8f6d',
+  '#7b8fb8',
+  '#b85b7d',
+  '#5ba8a0',
+]
+
+const rankSeries = computed<ChartSeries[]>(() => {
+  const { ranks } = statsStore.leaderboardRankHistory
+  const members = marketStore.members
+  return Object.entries(ranks).map(([uid, data], i) => {
+    const member = members.find((m) => m.userId === uid)
+    return {
+      label: member?.displayName ?? uid.slice(0, 6),
+      color:
+        uid === authStore.user?.uid ? '#5b8fa8' : MEMBER_COLORS[(i + 1) % MEMBER_COLORS.length]!,
+      data,
+    }
+  })
+})
+
+const rankLabels = computed(() => statsStore.leaderboardRankHistory.labels)
+const rankYMax = computed(() => marketStore.members.length || 2)
 </script>
 
 <template>
@@ -125,39 +176,98 @@ const sortedMembers = computed(() => [...marketStore.members].sort((a, b) => b.b
 
     <v-card variant="flat">
       <v-card-title class="text-h6">Leaderboard</v-card-title>
-      <v-list>
-        <v-list-item
-          v-for="(member, index) in sortedMembers"
-          :key="member.userId"
-          :title="member.displayName"
-        >
-          <v-list-item-subtitle>
-            <span :class="member.balance < 0 ? 'text-error' : ''">
-              {{ member.balance < 0 ? '-' : '' }}${{
-                Math.abs(member.balance).toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })
-              }}
-            </span>
-            <span class="text-medium-emphasis mx-1">·</span>
-            <span>{{ betsStore.memberShares[member.userId] ?? 0 }} shares</span>
-          </v-list-item-subtitle>
-          <template #prepend>
-            <span class="text-body-2 font-weight-bold mr-6 ml-3">{{ index + 1 }}</span>
-          </template>
-          <template #append>
-            <v-chip
-              v-if="member.userId === marketStore.market?.ownerId"
-              size="small"
-              color="primary"
-              variant="tonal"
+      <v-tabs v-model="leaderboardTab" density="compact">
+        <v-tab value="current">Current</v-tab>
+        <v-tab value="history">Over Time</v-tab>
+      </v-tabs>
+      <v-window v-model="leaderboardTab">
+        <v-window-item value="current">
+          <v-list>
+            <v-list-item density="compact" class="text-caption text-medium-emphasis">
+              <template #prepend>
+                <span class="mr-6 ml-3" style="min-width: 16px">#</span>
+              </template>
+              <span>Player</span>
+              <template #append>
+                <span class="d-inline-flex align-center">
+                  <v-btn icon size="x-small" variant="text" class="mr-1">
+                    <v-icon size="14">mdi-information-outline</v-icon>
+                    <v-tooltip activator="parent" location="top">
+                      Profit or loss across all resolved bets
+                    </v-tooltip>
+                  </v-btn>
+                  P/L
+                </span>
+              </template>
+            </v-list-item>
+            <v-divider />
+            <v-list-item
+              v-for="(member, index) in sortedMembers"
+              :key="member.userId"
+              :title="member.displayName"
+              class="cursor-pointer"
+              @click="router.push(`/stats/${member.userId}`)"
             >
-              Owner
-            </v-chip>
-          </template>
-        </v-list-item>
-      </v-list>
+              <v-list-item-subtitle>
+                <span>
+                  {{ member.balance < 0 ? '-' : '' }}${{
+                    Math.abs(member.balance).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })
+                  }}
+                </span>
+                <span class="text-medium-emphasis mx-1">·</span>
+                <span>{{ betsStore.memberShares[member.userId] ?? 0 }} shares</span>
+              </v-list-item-subtitle>
+              <template #prepend>
+                <span class="text-body-2 font-weight-bold mr-6 ml-3">{{ index + 1 }}</span>
+              </template>
+              <template #append>
+                <span
+                  class="text-body-2 font-weight-medium"
+                  :class="(memberPnL[member.userId] ?? 0) >= 0 ? 'text-success' : 'text-error'"
+                >
+                  {{ (memberPnL[member.userId] ?? 0) < 0 ? '-' : '' }}${{
+                    Math.abs(memberPnL[member.userId] ?? 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })
+                  }}
+                </span>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-window-item>
+        <v-window-item value="history">
+          <div v-if="rankSeries.length > 0 && rankLabels.length >= 2" class="pa-3">
+            <SvgLineChart
+              :series="rankSeries"
+              :labels="rankLabels"
+              :y-min="1"
+              :y-max="rankYMax"
+              :y-format="(v: number) => `#${v.toFixed(0)}`"
+              :invert-y="true"
+            />
+            <div class="d-flex flex-wrap ga-3 mt-2">
+              <div v-for="s in rankSeries" :key="s.label" class="d-flex align-center ga-1">
+                <div
+                  :style="{
+                    width: '10px',
+                    height: '10px',
+                    borderRadius: '2px',
+                    backgroundColor: s.color,
+                  }"
+                />
+                <span class="text-caption">{{ s.label }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-else class="pa-4 text-center text-medium-emphasis">
+            Not enough data yet. Rank history appears after at least 2 bets are resolved.
+          </div>
+        </v-window-item>
+      </v-window>
     </v-card>
   </v-container>
 </template>

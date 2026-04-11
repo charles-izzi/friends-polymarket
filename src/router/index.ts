@@ -31,7 +31,7 @@ const router = createRouter({
       component: () => import('@/views/BetDetailView.vue'),
     },
     {
-      path: '/stats',
+      path: '/stats/:userId?',
       name: 'stats',
       component: () => import('@/views/PlayerStatsView.vue'),
     },

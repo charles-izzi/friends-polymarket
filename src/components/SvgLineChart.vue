@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 
 export interface ChartSeries {
   label: string
@@ -27,9 +27,30 @@ const props = withDefaults(
   },
 )
 
-const SVG_W = 600
+const containerRef = ref<HTMLElement | null>(null)
+const containerWidth = ref(600)
+
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  if (containerRef.value) {
+    containerWidth.value = containerRef.value.clientWidth || 600
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        containerWidth.value = entry.contentRect.width || 600
+      }
+    })
+    resizeObserver.observe(containerRef.value)
+  }
+})
+
+onUnmounted(() => {
+  resizeObserver?.disconnect()
+})
+
+const svgW = computed(() => containerWidth.value)
 const PAD = { top: 6, right: 6, bottom: 22, left: 44 }
-const plotW = SVG_W - PAD.left - PAD.right
+const plotW = computed(() => svgW.value - PAD.left - PAD.right)
 
 const plotH = computed(() => props.height - PAD.top - PAD.bottom)
 
@@ -76,7 +97,7 @@ const xTicks = computed(() => {
   for (let i = 0; i < maxLabels; i++) {
     const idx = Math.round((i * (count - 1)) / (maxLabels - 1))
     ticks.push({
-      x: PAD.left + (idx / (count - 1)) * plotW,
+      x: PAD.left + (idx / (count - 1)) * plotW.value,
       label: props.labels[idx] ?? '',
     })
   }
@@ -98,7 +119,7 @@ const svgPaths = computed(() => {
   return props.series.map((s) => {
     const d = s.data
       .map((v, i) => {
-        const x = PAD.left + (i / last) * plotW
+        const x = PAD.left + (i / last) * plotW.value
         const y = toY(v)
         return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
       })
@@ -118,7 +139,7 @@ const hoverIndex = ref<number | null>(null)
 const hoverInfo = computed(() => {
   if (hoverIndex.value === null || pointCount.value < 2) return null
   const last = pointCount.value - 1
-  const x = PAD.left + (hoverIndex.value / last) * plotW
+  const x = PAD.left + (hoverIndex.value / last) * plotW.value
   const values = props.series.map((s) => ({
     label: s.label,
     value: s.data[hoverIndex.value!] ?? 0,
@@ -132,7 +153,7 @@ const hoverInfo = computed(() => {
 function onMouseMove(e: MouseEvent) {
   const svg = e.currentTarget as SVGSVGElement
   const rect = svg.getBoundingClientRect()
-  const mouseX = ((e.clientX - rect.left) / rect.width) * SVG_W
+  const mouseX = ((e.clientX - rect.left) / rect.width) * svgW.value
   const count = pointCount.value
   if (count < 2) {
     hoverIndex.value = null
@@ -142,7 +163,7 @@ function onMouseMove(e: MouseEvent) {
   let best = 0
   let bestDist = Infinity
   for (let i = 0; i <= last; i++) {
-    const px = PAD.left + (i / last) * plotW
+    const px = PAD.left + (i / last) * plotW.value
     const dist = Math.abs(px - mouseX)
     if (dist < bestDist) {
       bestDist = dist
@@ -158,81 +179,84 @@ function onMouseLeave() {
 </script>
 
 <template>
-  <template v-if="pointCount >= 2">
-    <svg
-      :viewBox="`0 0 ${SVG_W} ${height}`"
-      preserveAspectRatio="xMidYMid meet"
-      style="width: 100%; height: auto; display: block"
-      @mousemove="onMouseMove"
-      @mouseleave="onMouseLeave"
-    >
-      <!-- Y grid lines + labels -->
-      <template v-for="tick in yTicks" :key="tick">
-        <line
-          :x1="PAD.left"
-          :x2="SVG_W - PAD.right"
-          :y1="toY(tick)"
-          :y2="toY(tick)"
-          stroke="rgba(128,128,128,0.15)"
-          stroke-width="1"
-        />
-        <text :x="PAD.left - 6" :y="toY(tick) + 5" text-anchor="end" class="chart-label">
-          {{ formatY(tick) }}
-        </text>
-      </template>
-
-      <!-- X axis labels -->
-      <text
-        v-for="(tick, ti) in xTicks"
-        :key="ti"
-        :x="tick.x"
-        :y="height - 4"
-        text-anchor="middle"
-        class="chart-label"
+  <div ref="containerRef" style="width: 100%">
+    <template v-if="pointCount >= 2">
+      <svg
+        :viewBox="`0 0 ${svgW} ${height}`"
+        :width="svgW"
+        :height="height"
+        style="width: 100%; height: auto; display: block"
+        @mousemove="onMouseMove"
+        @mouseleave="onMouseLeave"
       >
-        {{ tick.label }}
-      </text>
-
-      <!-- Lines -->
-      <path
-        v-for="(line, li) in svgPaths"
-        :key="li"
-        :d="line.d"
-        :stroke="line.color"
-        stroke-width="2.5"
-        fill="none"
-        stroke-linejoin="round"
-        stroke-linecap="round"
-      />
-
-      <!-- Hover crosshair + dots + labels -->
-      <template v-if="hoverInfo">
-        <line
-          :x1="hoverInfo.x"
-          :x2="hoverInfo.x"
-          :y1="PAD.top"
-          :y2="PAD.top + plotH"
-          stroke="rgba(128,128,128,0.4)"
-          stroke-width="1"
-          stroke-dasharray="4,3"
-        />
-        <template v-for="(p, pi) in hoverInfo.values" :key="pi">
-          <circle
-            :cx="hoverInfo.x"
-            :cy="p.y"
-            r="4"
-            :fill="p.color"
-            stroke="white"
-            stroke-width="1.5"
+        <!-- Y grid lines + labels -->
+        <template v-for="tick in yTicks" :key="tick">
+          <line
+            :x1="PAD.left"
+            :x2="svgW - PAD.right"
+            :y1="toY(tick)"
+            :y2="toY(tick)"
+            stroke="rgba(128,128,128,0.15)"
+            stroke-width="1"
           />
-          <text :x="hoverInfo.x + 7" :y="p.y + 4" class="chart-hover-label" :fill="p.color">
-            {{ p.formatted }}
+          <text :x="PAD.left - 6" :y="toY(tick) + 5" text-anchor="end" class="chart-label">
+            {{ formatY(tick) }}
           </text>
         </template>
-      </template>
-    </svg>
-  </template>
-  <p v-else class="text-body-2 text-medium-emphasis">Not enough data to display chart</p>
+
+        <!-- X axis labels -->
+        <text
+          v-for="(tick, ti) in xTicks"
+          :key="ti"
+          :x="tick.x"
+          :y="height - 4"
+          text-anchor="middle"
+          class="chart-label"
+        >
+          {{ tick.label }}
+        </text>
+
+        <!-- Lines -->
+        <path
+          v-for="(line, li) in svgPaths"
+          :key="li"
+          :d="line.d"
+          :stroke="line.color"
+          stroke-width="2.5"
+          fill="none"
+          stroke-linejoin="round"
+          stroke-linecap="round"
+        />
+
+        <!-- Hover crosshair + dots + labels -->
+        <template v-if="hoverInfo">
+          <line
+            :x1="hoverInfo.x"
+            :x2="hoverInfo.x"
+            :y1="PAD.top"
+            :y2="PAD.top + plotH"
+            stroke="rgba(128,128,128,0.4)"
+            stroke-width="1"
+            stroke-dasharray="4,3"
+          />
+          <template v-for="(p, pi) in hoverInfo.values" :key="pi">
+            <circle
+              :cx="hoverInfo.x"
+              :cy="p.y"
+              r="4"
+              :fill="p.color"
+              stroke="white"
+              stroke-width="1.5"
+            />
+            <text :x="hoverInfo.x + 7" :y="p.y + 4" class="chart-hover-label" :fill="p.color">
+              {{ p.formatted }}
+            </text>
+          </template>
+        </template>
+      </svg>
+    </template>
+    <p v-else class="text-body-2 text-medium-emphasis">Not enough data to display chart</p>
+  </div>
 </template>
 
 <style scoped>
