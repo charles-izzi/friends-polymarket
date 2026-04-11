@@ -53,12 +53,18 @@ function timeRemaining(bet: Bet): string {
   if (effectiveStatus(bet) !== 'open') return ''
   const diff = bet.closesAt.toDate().getTime() - Date.now()
   if (diff <= 0) return ''
-  const days = Math.floor(diff / 86400000)
+  const years = Math.floor(diff / 31536000000)
+  const months = Math.floor((diff % 31536000000) / 2592000000)
+  const days = Math.floor((diff % 2592000000) / 86400000)
   const hours = Math.floor((diff % 86400000) / 3600000)
   const minutes = Math.floor((diff % 3600000) / 60000)
-  if (days > 0) return `${days}d ${hours}h ${minutes}m left`
-  if (hours > 0) return `${hours}h ${minutes}m left`
-  return `${minutes}m left`
+  const parts: string[] = []
+  if (years > 0) parts.push(`${years}y`)
+  if (months > 0) parts.push(`${months}mo`)
+  if (days > 0) parts.push(`${days}d`)
+  if (hours > 0) parts.push(`${hours}h`)
+  if (minutes > 0) parts.push(`${minutes}m`)
+  return parts.length > 0 ? `${parts.slice(0, 2).join(' ')} left` : ''
 }
 
 function statusColor(bet: Bet): string {

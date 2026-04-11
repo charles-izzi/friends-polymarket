@@ -28,7 +28,7 @@ const props = withDefaults(
 )
 
 const containerRef = ref<HTMLElement | null>(null)
-const containerWidth = ref(600)
+const containerWidth = ref(0)
 
 let resizeObserver: ResizeObserver | null = null
 
@@ -49,7 +49,7 @@ onUnmounted(() => {
 })
 
 const svgW = computed(() => containerWidth.value)
-const PAD = { top: 6, right: 6, bottom: 22, left: 44 }
+const PAD = { top: 6, right: 16, bottom: 22, left: 44 }
 const plotW = computed(() => svgW.value - PAD.left - PAD.right)
 
 const plotH = computed(() => props.height - PAD.top - PAD.bottom)
@@ -179,13 +179,14 @@ function onMouseLeave() {
 </script>
 
 <template>
-  <div ref="containerRef" style="width: 100%">
-    <template v-if="pointCount >= 2">
+  <div ref="containerRef" style="width: 100%" :style="{ height: height + 'px' }">
+    <template v-if="pointCount >= 2 && containerWidth > 0">
       <svg
         :viewBox="`0 0 ${svgW} ${height}`"
         :width="svgW"
         :height="height"
-        style="width: 100%; height: auto; display: block"
+        style="width: 100%; display: block"
+        :style="{ height: height + 'px' }"
         @mousemove="onMouseMove"
         @mouseleave="onMouseLeave"
       >
