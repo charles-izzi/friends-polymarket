@@ -337,7 +337,7 @@ onUnmounted(() => {
       >
         <template v-if="isIos">
           <v-banner-text>
-            Install Friendly Bet for notifications: tap
+            Install Friendly Bet for quick access: tap
             <v-icon icon="mdi-export-variant" size="small" /> then
             <strong>Add to Home Screen</strong>.
           </v-banner-text>

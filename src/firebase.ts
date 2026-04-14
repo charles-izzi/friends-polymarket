@@ -67,7 +67,8 @@ export async function requestPushPermission(): Promise<string | null> {
     await registerFn({ token, database: dbName })
 
     return token
-  } catch {
+  } catch (err) {
+    console.error('Push permission/token registration failed:', err)
     return null
   }
 }

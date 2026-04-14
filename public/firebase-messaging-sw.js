@@ -1,16 +1,11 @@
 importScripts('https://www.gstatic.com/firebasejs/12.10.0/firebase-app-compat.js')
 importScripts('https://www.gstatic.com/firebasejs/12.10.0/firebase-messaging-compat.js')
 
-// Firebase config is injected automatically via firebase init in the hosting environment.
-// For local dev, the service worker only needs messagingSenderId to receive push.
-// The actual config values are populated at build time via the hosting __/firebase/init.js,
-// but for the SW we initialize with minimal config below.
-// These will be overridden by the actual push subscription which uses the VAPID key.
 firebase.initializeApp({
-  apiKey: 'placeholder',
-  projectId: 'placeholder',
-  messagingSenderId: 'placeholder',
-  appId: 'placeholder',
+  apiKey: 'AIzaSyB4d48uGba1sqDOkTyd0P7GYc9SEi-giNk',
+  projectId: 'internal-polymarket',
+  messagingSenderId: '677024348338',
+  appId: '1:677024348338:web:761fa4824418256013f1ab',
 })
 
 const messaging = firebase.messaging()
