@@ -184,7 +184,10 @@ const rankYMax = computed(() => marketStore.members.length || 2)
       </v-tabs>
       <v-window v-model="leaderboardTab">
         <v-window-item value="current">
-          <div v-if="statsStore.allStatsLoading && !Object.keys(statsStore.allMemberStats).length" class="text-center py-4">
+          <div
+            v-if="statsStore.allStatsLoading && !Object.keys(statsStore.allMemberStats).length"
+            class="text-center py-4"
+          >
             <v-progress-circular indeterminate size="24" />
           </div>
           <v-list v-else>
