@@ -10,6 +10,7 @@ export const useStatsStore = defineStore('stats', () => {
   const myStats = ref<UserStats | null>(null)
   const allMemberStats = ref<Record<string, UserStats>>({})
   const loading = ref(false)
+  const allStatsLoading = ref(false)
 
   let unsubMyStats: (() => void) | null = null
 
@@ -34,13 +35,18 @@ export const useStatsStore = defineStore('stats', () => {
     const marketStore = useMarketStore()
     if (!marketStore.market) return
 
-    const statsCol = collection(db, 'markets', marketStore.market.id, 'stats')
-    const snap = await getDocs(statsCol)
-    const result: Record<string, UserStats> = {}
-    for (const d of snap.docs) {
-      result[d.id] = d.data() as UserStats
+    allStatsLoading.value = true
+    try {
+      const statsCol = collection(db, 'markets', marketStore.market.id, 'stats')
+      const snap = await getDocs(statsCol)
+      const result: Record<string, UserStats> = {}
+      for (const d of snap.docs) {
+        result[d.id] = d.data() as UserStats
+      }
+      allMemberStats.value = result
+    } finally {
+      allStatsLoading.value = false
     }
-    allMemberStats.value = result
   }
 
   const cumulativePnL = computed(() => {
@@ -132,6 +138,7 @@ export const useStatsStore = defineStore('stats', () => {
     myStats,
     allMemberStats,
     loading,
+    allStatsLoading,
     listenToStats,
     loadAllStats,
     cumulativePnL,

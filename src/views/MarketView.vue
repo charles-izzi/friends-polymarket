@@ -82,7 +82,9 @@ const memberPnL = computed(() => {
 
 const sortedMembers = computed(() =>
   [...marketStore.members].sort(
-    (a, b) => (memberPnL.value[b.userId] ?? 0) - (memberPnL.value[a.userId] ?? 0),
+    (a, b) =>
+      (memberPnL.value[b.userId] ?? 0) - (memberPnL.value[a.userId] ?? 0) ||
+      a.displayName.localeCompare(b.displayName),
   ),
 )
 
@@ -182,7 +184,10 @@ const rankYMax = computed(() => marketStore.members.length || 2)
       </v-tabs>
       <v-window v-model="leaderboardTab">
         <v-window-item value="current">
-          <v-list>
+          <div v-if="statsStore.allStatsLoading && !Object.keys(statsStore.allMemberStats).length" class="text-center py-4">
+            <v-progress-circular indeterminate size="24" />
+          </div>
+          <v-list v-else>
             <v-list-item density="compact" class="text-caption text-medium-emphasis">
               <template #prepend>
                 <span class="mr-6 ml-3" style="min-width: 16px">#</span>
