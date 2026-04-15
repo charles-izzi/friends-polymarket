@@ -159,7 +159,9 @@ async function sendPushToUsers(
     }
   }
 
-  // Send messages in parallel
+  // Send with both top-level notification (for FCM) and explicit webpush.notification
+  // (for the browser's Web Notifications API). The webpush.notification block is what
+  // the browser actually uses to render the notification on mobile.
   const results = await Promise.allSettled(
     tokenDocs.map(({ ref, token }) =>
       messaging
@@ -168,6 +170,12 @@ async function sendPushToUsers(
           notification,
           data: { ...data, title: notification.title, body: notification.body },
           webpush: {
+            headers: { Urgency: 'high' },
+            notification: {
+              title: notification.title,
+              body: notification.body,
+              icon: '/logo-192.png',
+            },
             fcmOptions: { link: data.betId ? `/bets/${data.betId}` : '/' },
           },
         })
@@ -188,6 +196,9 @@ async function sendPushToUsers(
   if (failures > 0) {
     console.warn(`Push: ${failures}/${tokenDocs.length} sends failed for market ${marketId}`)
   }
+  console.log(
+    `Push: sent to ${tokenDocs.length - failures}/${tokenDocs.length} tokens for ${userIds.length} users in market ${marketId}`,
+  )
 }
 
 export const registerFcmToken = onCall(async (request) => {

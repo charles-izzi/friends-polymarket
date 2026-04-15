@@ -87,8 +87,9 @@ export const useMarketStore = defineStore('market', () => {
 
       await Promise.all([marketReady, membersReady])
 
-      // Auto-prompt for push notifications if not yet asked
-      if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      // Register/refresh push token on every load — the token may become stale
+      // after SW updates, app reinstalls, or browser restarts
+      if (typeof Notification !== 'undefined' && Notification.permission !== 'denied') {
         requestPushPermission()
       }
     } catch (e: unknown) {
