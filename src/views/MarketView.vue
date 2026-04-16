@@ -4,7 +4,7 @@ import { useBetsStore } from '@/stores/bets'
 import { useStatsStore } from '@/stores/stats'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import type { Bet } from '@/types'
 import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
@@ -17,10 +17,24 @@ const router = useRouter()
 
 const leaderboardTab = ref('current')
 
+const now = ref(Date.now())
+let nowInterval: ReturnType<typeof setInterval> | null = null
+
 onMounted(() => {
   betsStore.listenToBets()
   statsStore.loadAllStats()
+  nowInterval = setInterval(() => (now.value = Date.now()), 30_000)
 })
+
+onUnmounted(() => {
+  if (nowInterval) clearInterval(nowInterval)
+})
+
+function effectiveStatus(bet: Bet): Bet['status'] {
+  if (bet.status !== 'open') return bet.status
+  if (bet.closesAt.toDate().getTime() <= now.value) return 'closed'
+  return 'open'
+}
 
 const copied = ref(false)
 const inviteUrl = computed(() => {
@@ -30,12 +44,8 @@ const inviteUrl = computed(() => {
 
 const topBets = computed(() =>
   [...betsStore.bets]
-    .sort((a, b) => {
-      const aOpen = a.status === 'open' ? 0 : 1
-      const bOpen = b.status === 'open' ? 0 : 1
-      if (aOpen !== bOpen) return aOpen - bOpen
-      return b.createdAt.toMillis() - a.createdAt.toMillis()
-    })
+    .filter((b) => effectiveStatus(b) === 'open')
+    .sort((a, b) => (b.totalVolume ?? 0) - (a.totalVolume ?? 0))
     .slice(0, 3),
 )
 
@@ -58,7 +68,7 @@ function topOutcome(bet: Bet): { label: string; pct: string } {
 }
 
 function statusColor(bet: Bet): string {
-  switch (bet.status) {
+  switch (effectiveStatus(bet)) {
     case 'open':
       return 'success'
     case 'closed':
@@ -166,7 +176,7 @@ const rankYMax = computed(() => marketStore.members.length || 2)
             </v-list-item-subtitle>
             <template #append>
               <v-chip :color="statusColor(bet)" size="x-small" variant="tonal">
-                {{ bet.status }}
+                {{ effectiveStatus(bet) }}
               </v-chip>
             </template>
           </v-list-item>
