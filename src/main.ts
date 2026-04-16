@@ -45,6 +45,14 @@ app.use(pinia)
 app.use(vuetify)
 app.use(router)
 
+// Reload on bfcache restore — network connections (Firestore WebSocket) are
+// dead after the page is frozen, which causes blank screens on PWA resume.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    window.location.reload()
+  }
+})
+
 const authStore = useAuthStore()
 authStore.init().then(() => {
   app.mount('#app')

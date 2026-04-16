@@ -65,11 +65,15 @@ router.beforeEach(async (to) => {
     return { path: '/' }
   }
 
-  // If authenticated, ensure market store is loaded
+  // If authenticated, ensure market store is loaded (with timeout so
+  // navigation isn't blocked when offline / on slow PWA resume)
   if (authStore.isAuthenticated && to.name !== 'login') {
     const marketStore = useMarketStore()
     if (marketStore.loading) {
-      await marketStore.loadUserMarket()
+      await Promise.race([
+        marketStore.loadUserMarket(),
+        new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+      ])
     }
 
     // Let InviteView handle the join flow with its own loading UI
