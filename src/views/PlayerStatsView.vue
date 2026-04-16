@@ -36,6 +36,9 @@ onUnmounted(() => {
 
 const stats = computed(() => statsStore.myStats)
 const hasData = computed(() => (stats.value?.totalResolved ?? 0) > 0)
+const pageLoading = computed(
+  () => statsStore.loading || betsStore.loading || !betsStore.positionsReady,
+)
 
 // --- Cumulative P&L Chart ---
 const pnlSeries = computed<ChartSeries[]>(() => {
@@ -128,7 +131,7 @@ function fmtPct(v: number): string {
       <h1 class="text-h6 ml-2">{{ playerName }}</h1>
     </div>
 
-    <template v-if="statsStore.loading">
+    <template v-if="pageLoading">
       <v-progress-linear indeterminate />
     </template>
 
