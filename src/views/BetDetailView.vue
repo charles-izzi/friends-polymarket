@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
+import { useSmartBack } from '@/composables/useSmartBack'
 import { useBetsStore } from '@/stores/bets'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
@@ -10,7 +11,7 @@ import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
 
 const route = useRoute()
-const router = useRouter()
+const { goBack } = useSmartBack('/bets')
 const betsStore = useBetsStore()
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
@@ -310,7 +311,7 @@ onUnmounted(() => {
 <template>
   <v-container max-width="700" class="pt-0">
     <div class="d-flex align-center mb-0">
-      <v-btn icon="mdi-arrow-left" variant="text" @click="router.push('/bets')" />
+      <v-btn icon="mdi-arrow-left" variant="text" @click="goBack()" />
       <h1 class="text-h6 ml-2 flex-grow-1">Bet Detail</h1>
       <template
         v-if="isCreator && bet && (effectiveStatus === 'open' || effectiveStatus === 'closed')"

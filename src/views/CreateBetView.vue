@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useSmartBack } from '@/composables/useSmartBack'
 import { useMarketStore } from '@/stores/market'
 import { useBetsStore } from '@/stores/bets'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const { goBack } = useSmartBack('/bets')
 const marketStore = useMarketStore()
 const betsStore = useBetsStore()
 const authStore = useAuthStore()
@@ -79,7 +81,7 @@ async function handleSubmit() {
 <template>
   <v-container max-width="600" class="pt-0">
     <div class="d-flex align-center mb-0">
-      <v-btn icon="mdi-arrow-left" variant="text" @click="router.back()" />
+      <v-btn icon="mdi-arrow-left" variant="text" @click="goBack()" />
       <h1 class="text-h6 ml-2">Create a Bet</h1>
     </div>
 

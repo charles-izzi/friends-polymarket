@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useSmartBack } from '@/composables/useSmartBack'
 import { useStatsStore } from '@/stores/stats'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
@@ -9,6 +10,7 @@ import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
 
 const router = useRouter()
+const { goBack } = useSmartBack('/')
 const route = useRoute()
 const statsStore = useStatsStore()
 const marketStore = useMarketStore()
@@ -122,7 +124,7 @@ function fmtPct(v: number): string {
 <template>
   <v-container max-width="700" class="pt-0">
     <div class="d-flex align-center mb-2">
-      <v-btn icon="mdi-arrow-left" variant="text" @click="router.push('/')" />
+      <v-btn icon="mdi-arrow-left" variant="text" @click="goBack()" />
       <h1 class="text-h6 ml-2">{{ playerName }}</h1>
     </div>
 

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useSmartBack } from '@/composables/useSmartBack'
 import { useBetsStore } from '@/stores/bets'
 import { useAuthStore } from '@/stores/auth'
 import { useCommentsStore } from '@/stores/comments'
 import type { Bet } from '@/types'
 
 const router = useRouter()
+const { goBack } = useSmartBack('/')
 const betsStore = useBetsStore()
 const authStore = useAuthStore()
 const commentsStore = useCommentsStore()
@@ -186,7 +188,7 @@ const sortedBets = computed(() => {
   <v-container class="pt-0">
     <div class="d-flex align-center justify-space-between mb-0">
       <div class="d-flex align-center ga-2">
-        <v-btn icon="mdi-arrow-left" variant="text" @click="router.push('/')" />
+        <v-btn icon="mdi-arrow-left" variant="text" @click="goBack()" />
         <h1 class="text-h6">Bets</h1>
       </div>
       <v-btn color="primary" prepend-icon="mdi-plus" @click="router.push('/bets/create')">
