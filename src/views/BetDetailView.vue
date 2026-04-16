@@ -134,6 +134,15 @@ function onSliderUpdate(index: number, val: number) {
   }
 }
 
+/** Block mousedown/touchstart unless it originated on the slider thumb */
+function guardSliderEvent(e: MouseEvent | TouchEvent) {
+  const target = e.target as HTMLElement | null
+  if (!target?.closest('.v-slider-thumb')) {
+    e.stopPropagation()
+    e.preventDefault()
+  }
+}
+
 function resetSliders() {
   userEdited.value = false
   syncDesiredShares()
@@ -700,16 +709,22 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <v-slider
+            <div
               v-if="canTrade"
-              :model-value="desiredShares[i] ?? 0"
-              @update:model-value="(val: number) => onSliderUpdate(i, val)"
-              :min="0"
-              :max="100"
-              :step="1"
-              density="compact"
-              hide-details
-            />
+              class="thumb-only-slider"
+              @mousedown.capture="guardSliderEvent"
+              @touchstart.capture="guardSliderEvent"
+            >
+              <v-slider
+                :model-value="desiredShares[i] ?? 0"
+                @update:model-value="(val: number) => onSliderUpdate(i, val)"
+                :min="0"
+                :max="100"
+                :step="1"
+                density="compact"
+                hide-details
+              />
+            </div>
 
             <p
               v-if="limitWarnings[i]"
@@ -985,5 +1000,18 @@ onUnmounted(() => {
   50% {
     box-shadow: 0 0 8px 4px rgba(255, 152, 0, 0.4);
   }
+}
+
+/* Only allow slider interaction via the thumb – ignore track clicks/taps */
+.thumb-only-slider :deep(*) {
+  cursor: default !important;
+}
+.thumb-only-slider :deep(.v-slider-thumb__surface) {
+  width: 28px;
+  height: 28px;
+  cursor: grab !important;
+}
+.thumb-only-slider :deep(.v-slider-thumb__surface:active) {
+  cursor: grabbing !important;
 }
 </style>
