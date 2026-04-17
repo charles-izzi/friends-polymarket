@@ -35,9 +35,12 @@ onUnmounted(() => {
 })
 
 // Re-fetch when the active market changes (e.g. switching via sidebar)
-watch(() => marketStore.market?.id, (newId, oldId) => {
-  if (newId && newId !== oldId) refreshMarketData()
-})
+watch(
+  () => marketStore.market?.id,
+  (newId, oldId) => {
+    if (newId && newId !== oldId) refreshMarketData()
+  },
+)
 
 function effectiveStatus(bet: Bet): Bet['status'] {
   if (bet.status !== 'open') return bet.status
