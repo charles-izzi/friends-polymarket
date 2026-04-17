@@ -36,6 +36,7 @@ export const useStatsStore = defineStore('stats', () => {
     if (!marketStore.market) return
 
     allStatsLoading.value = true
+    allMemberStats.value = {}
     try {
       const statsCol = collection(db, 'markets', marketStore.market.id, 'stats')
       const snap = await getDocs(statsCol)

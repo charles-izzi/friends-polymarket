@@ -4,7 +4,7 @@ import { useBetsStore } from '@/stores/bets'
 import { useStatsStore } from '@/stores/stats'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import type { Bet } from '@/types'
 import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
@@ -20,14 +20,23 @@ const leaderboardTab = ref('current')
 const now = ref(Date.now())
 let nowInterval: ReturnType<typeof setInterval> | null = null
 
-onMounted(() => {
+function refreshMarketData() {
   betsStore.listenToBets()
   statsStore.loadAllStats()
+}
+
+onMounted(() => {
+  refreshMarketData()
   nowInterval = setInterval(() => (now.value = Date.now()), 30_000)
 })
 
 onUnmounted(() => {
   if (nowInterval) clearInterval(nowInterval)
+})
+
+// Re-fetch when the active market changes (e.g. switching via sidebar)
+watch(() => marketStore.market?.id, (newId, oldId) => {
+  if (newId && newId !== oldId) refreshMarketData()
 })
 
 function effectiveStatus(bet: Bet): Bet['status'] {
