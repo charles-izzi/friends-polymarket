@@ -33,10 +33,16 @@ function navigateToBet(direction: 1 | -1) {
   router.replace(`/bets/${list[nextIdx]!.id}`)
 }
 
-useSwipe({
+const { swipeDeltaX } = useSwipe({
+  ignore: '.v-slider-thumb',
   onSwipeLeft: () => navigateToBet(1),
   onSwipeRight: () => navigateToBet(-1),
 })
+
+const canSwipeNext = computed(
+  () => currentIndex.value >= 0 && currentIndex.value < filteredBetList.value.length - 1,
+)
+const canSwipePrev = computed(() => currentIndex.value > 0)
 
 const betId = computed(() => route.params.id as string)
 const bet = computed(() => betsStore.bets.find((m) => m.id === betId.value) ?? null)
@@ -366,6 +372,22 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <!-- Swipe indicators -->
+  <div
+    v-if="canSwipePrev && swipeDeltaX > 0"
+    class="swipe-indicator swipe-indicator-left"
+    :style="{ opacity: Math.min(1, swipeDeltaX / 50) }"
+  >
+    <v-icon>mdi-chevron-left</v-icon>
+  </div>
+  <div
+    v-if="canSwipeNext && swipeDeltaX < 0"
+    class="swipe-indicator swipe-indicator-right"
+    :style="{ opacity: Math.min(1, -swipeDeltaX / 50) }"
+  >
+    <v-icon>mdi-chevron-right</v-icon>
+  </div>
+
   <v-container max-width="700" class="pt-0">
     <div class="d-flex align-center mb-0">
       <v-btn icon="mdi-arrow-left" variant="text" @click="goBack()" />
@@ -1064,6 +1086,29 @@ onUnmounted(() => {
   50% {
     box-shadow: 0 0 8px 4px rgba(255, 152, 0, 0.4);
   }
+}
+
+/* Swipe navigation indicators */
+.swipe-indicator {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 100;
+  pointer-events: none;
+  background: rgba(var(--v-theme-surface-variant), 0.85);
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.swipe-indicator-left {
+  left: 6px;
+}
+.swipe-indicator-right {
+  right: 6px;
 }
 
 /* Only allow slider interaction via the thumb – ignore track clicks/taps */
