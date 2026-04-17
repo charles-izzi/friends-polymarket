@@ -107,9 +107,45 @@ const projectedPrices = computed(() => {
   return calcPrices(newSharesSold, b)
 })
 
-const profitPotential = computed(() => {
-  if (!bet.value) return 0
-  return Math.max(...tradeDiffs.value.map((d) => d - totalCost.value))
+const holdingsNetCost = computed(() => position.value?.totalCost ?? 0)
+
+const projectedNetCost = computed(() => holdingsNetCost.value + totalCost.value)
+
+const holdingsProfitPotential = computed(() => {
+  if (!bet.value) return { value: 0, outcome: '' }
+  const cost = holdingsNetCost.value
+  let bestIdx = 0
+  let bestProfit = -Infinity
+  bet.value.outcomes.forEach((_, i) => {
+    const profit = (position.value?.shares[i] ?? 0) - cost
+    if (profit > bestProfit) {
+      bestProfit = profit
+      bestIdx = i
+    }
+  })
+  return {
+    value: bestProfit === -Infinity ? 0 : bestProfit,
+    outcome: bet.value.outcomes[bestIdx] ?? '',
+  }
+})
+
+const projectedHoldingsProfitPotential = computed(() => {
+  if (!bet.value) return { value: 0, outcome: '' }
+  const cost = projectedNetCost.value
+  let bestIdx = 0
+  let bestProfit = -Infinity
+  bet.value.outcomes.forEach((_, i) => {
+    const shares = (position.value?.shares[i] ?? 0) + (tradeDiffs.value[i] ?? 0)
+    const profit = shares - cost
+    if (profit > bestProfit) {
+      bestProfit = profit
+      bestIdx = i
+    }
+  })
+  return {
+    value: bestProfit === -Infinity ? 0 : bestProfit,
+    outcome: bet.value.outcomes[bestIdx] ?? '',
+  }
 })
 
 const tradeActionLabel = computed(() => {
@@ -139,7 +175,10 @@ function guardSliderEvent(e: MouseEvent | TouchEvent) {
   const target = e.target as HTMLElement | null
   if (!target?.closest('.v-slider-thumb')) {
     e.stopPropagation()
-    e.preventDefault()
+    // Only preventDefault for mouse events; touch needs default for scrolling
+    if (e instanceof MouseEvent) {
+      e.preventDefault()
+    }
   }
 }
 
@@ -685,7 +724,10 @@ onUnmounted(() => {
                     {{ ((prices[i] ?? 0) * 100).toFixed(0) }}%
                   </span>
                 </div>
-                <div v-if="hasPendingTrades" class="d-flex align-baseline ga-2">
+                <div
+                  class="d-flex align-baseline ga-2"
+                  :style="{ visibility: hasPendingTrades ? 'visible' : 'hidden' }"
+                >
                   <span
                     class="text-caption font-weight-bold"
                     :style="{
@@ -761,68 +803,86 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Trade summary -->
-          <template v-if="hasPendingTrades">
-            <v-divider class="mb-3" />
+          <!-- Total Holdings -->
+          <v-divider class="mb-3" />
 
-            <div class="mb-3">
-              <div
-                v-for="(outcome, i) in bet.outcomes"
-                :key="'summary-' + i"
-                v-show="(tradeDiffs[i] ?? 0) !== 0"
-                class="d-flex align-center justify-space-between text-body-2 py-1"
-                style="
-                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
-                "
-              >
-                <span>
-                  <span :class="(tradeDiffs[i] ?? 0) > 0 ? 'text-success' : 'text-error'">
-                    {{ (tradeDiffs[i] ?? 0) > 0 ? 'Buy' : 'Sell' }}
-                  </span>
-                  "{{ outcome }}"
-                </span>
-                <span class="d-flex ga-2">
-                  <span :style="{ color: (tradeDiffs[i] ?? 0) > 0 ? '#4caf50' : '#ef5350' }">
-                    ({{ (tradeDiffs[i] ?? 0) > 0 ? '+' : '' }}{{ tradeDiffs[i] ?? 0 }})
-                  </span>
-                  <span :style="{ color: (tradeCosts[i] ?? 0) <= 0 ? '#4caf50' : '#ef5350' }">
-                    ({{ (tradeCosts[i] ?? 0) <= 0 ? '+' : '-' }}${{
-                      Math.abs(tradeCosts[i] ?? 0).toFixed(2)
-                    }})
-                  </span>
-                </span>
-              </div>
-              <div
-                class="d-flex align-center justify-space-between text-body-2 font-weight-bold mt-2"
-              >
-                <span>Net cost</span>
-                <span :style="{ color: totalCost <= 0 ? '#4caf50' : '#ef5350' }">
-                  {{ totalCost <= 0 ? '+' : '-' }}${{ Math.abs(totalCost).toFixed(2) }}
-                </span>
-              </div>
-              <div
-                class="d-flex align-center justify-space-between text-body-2 font-weight-bold mt-1"
-              >
-                <span>Profit potential</span>
-                <span :style="{ color: profitPotential >= 0 ? '#4caf50' : '#ef5350' }">
-                  {{ profitPotential >= 0 ? '+' : '' }}${{ profitPotential.toFixed(2) }}
+          <div class="mb-3">
+            <!-- Net cost -->
+            <div class="d-flex align-start justify-space-between text-body-2 mb-1">
+              <span class="font-weight-medium">Net cost</span>
+              <div class="d-flex flex-column align-end" style="line-height: 1.3">
+                <span class="font-weight-bold">${{ holdingsNetCost.toFixed(2) }}</span>
+                <span
+                  class="text-caption font-weight-bold"
+                  :style="{
+                    color: projectedNetCost <= holdingsNetCost ? '#4caf50' : '#ef5350',
+                    visibility: hasPendingTrades ? 'visible' : 'hidden',
+                  }"
+                >
+                  ${{ projectedNetCost.toFixed(2) }}
                 </span>
               </div>
             </div>
 
-            <div class="d-flex ga-2">
-              <v-btn
-                color="primary"
-                :loading="submitting"
-                :disabled="submitting"
-                @click="handleTrades"
-                class="flex-grow-1"
+            <!-- Profit potential -->
+            <div class="d-flex align-start justify-space-between text-body-2">
+              <span class="font-weight-medium"
+                >Profit potential<span
+                  v-if="holdingsProfitPotential.outcome"
+                  class="text-medium-emphasis font-weight-regular"
+                >
+                  ({{ holdingsProfitPotential.outcome }})</span
+                ></span
               >
-                {{ tradeActionLabel }}
-              </v-btn>
-              <v-btn variant="text" @click="resetSliders" :disabled="submitting"> Reset </v-btn>
+              <div class="d-flex flex-column align-end" style="line-height: 1.3">
+                <span
+                  class="font-weight-bold"
+                  :style="{
+                    color: holdingsProfitPotential.value >= 0 ? '#4caf50' : '#ef5350',
+                  }"
+                >
+                  {{ holdingsProfitPotential.value >= 0 ? '+' : '' }}${{
+                    holdingsProfitPotential.value.toFixed(2)
+                  }}
+                </span>
+                <span
+                  class="text-caption font-weight-bold"
+                  :style="{
+                    color:
+                      projectedHoldingsProfitPotential.value >= holdingsProfitPotential.value
+                        ? '#4caf50'
+                        : '#ef5350',
+                    visibility: hasPendingTrades ? 'visible' : 'hidden',
+                  }"
+                >
+                  {{ projectedHoldingsProfitPotential.value >= 0 ? '+' : '' }}${{
+                    projectedHoldingsProfitPotential.value.toFixed(2)
+                  }}
+                  <span
+                    v-if="
+                      projectedHoldingsProfitPotential.outcome !== holdingsProfitPotential.outcome
+                    "
+                    class="text-medium-emphasis"
+                  >
+                    ({{ projectedHoldingsProfitPotential.outcome }})
+                  </span>
+                </span>
+              </div>
             </div>
-          </template>
+          </div>
+
+          <div class="d-flex ga-2" :style="{ visibility: hasPendingTrades ? 'visible' : 'hidden' }">
+            <v-btn
+              color="primary"
+              :loading="submitting"
+              :disabled="submitting"
+              @click="handleTrades"
+              class="flex-grow-1"
+            >
+              {{ tradeActionLabel }}
+            </v-btn>
+            <v-btn variant="text" @click="resetSliders" :disabled="submitting"> Reset </v-btn>
+          </div>
 
           <v-alert v-if="betsStore.error" type="error" variant="tonal" class="mt-3">
             {{ betsStore.error }}
