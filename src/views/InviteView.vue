@@ -13,14 +13,9 @@ const errorMsg = ref('')
 onMounted(async () => {
   const code = route.params.code as string
 
-  if (marketStore.hasMarket) {
-    router.replace('/')
-    return
-  }
-
   try {
-    await marketStore.joinMarket(code)
-    router.replace('/')
+    const marketId = await marketStore.joinMarket(code)
+    router.replace(`/${marketId}`)
   } catch (e: unknown) {
     status.value = 'error'
     errorMsg.value = e instanceof Error ? e.message : 'Failed to join market'

@@ -3,15 +3,17 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSmartBack } from '@/composables/useSmartBack'
 import { useBetsStore } from '@/stores/bets'
+import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 import { useCommentsStore } from '@/stores/comments'
 import type { Bet } from '@/types'
 
 const router = useRouter()
-const { goBack } = useSmartBack('/')
 const betsStore = useBetsStore()
+const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const commentsStore = useCommentsStore()
+const { goBack } = useSmartBack(`/${marketStore.market?.id ?? ''}`)
 
 const OUTCOME_COLORS = [
   '#5b8fa8',
@@ -191,7 +193,11 @@ const sortedBets = computed(() => {
         <v-btn icon="mdi-arrow-left" variant="text" @click="goBack()" />
         <h1 class="text-h6">Bets</h1>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="router.push('/bets/create')">
+      <v-btn
+        color="primary"
+        prepend-icon="mdi-plus"
+        @click="router.push(`/${marketStore.market!.id}/bets/create`)"
+      >
         New Bet
       </v-btn>
     </div>
@@ -263,7 +269,9 @@ const sortedBets = computed(() => {
       <v-icon icon="mdi-chart-line" size="64" color="grey-lighten-1" class="mb-4" />
       <p class="text-h6 text-medium-emphasis">No bets yet</p>
       <p class="text-body-2 text-medium-emphasis mb-4">Create the first one!</p>
-      <v-btn color="primary" @click="router.push('/bets/create')">Create a Bet</v-btn>
+      <v-btn color="primary" @click="router.push(`/${marketStore.market!.id}/bets/create`)"
+        >Create a Bet</v-btn
+      >
     </div>
 
     <template v-if="betsStore.positionsReady">
@@ -273,7 +281,7 @@ const sortedBets = computed(() => {
         class="mb-3 cursor-pointer"
         variant="outlined"
         hover
-        @click="router.push(`/bets/${bet.id}`)"
+        @click="router.push(`/${marketStore.market!.id}/bets/${bet.id}`)"
       >
         <v-card-text>
           <div class="d-flex align-center ga-4 mb-2">

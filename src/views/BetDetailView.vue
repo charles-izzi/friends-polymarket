@@ -14,12 +14,12 @@ import type { ChartSeries } from '@/components/SvgLineChart.vue'
 
 const route = useRoute()
 const router = useRouter()
-const { goBack } = useSmartBack('/bets')
 const betsStore = useBetsStore()
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const commentsStore = useCommentsStore()
 const { sortedBets: filteredBetList } = useFilteredBets()
+const { goBack } = useSmartBack(`/${marketStore.market?.id ?? ''}/bets`)
 
 // Swipe navigation between bets
 const currentIndex = computed(() => filteredBetList.value.findIndex((b) => b.id === betId.value))
@@ -30,7 +30,7 @@ function navigateToBet(direction: 1 | -1) {
   const idx = currentIndex.value
   const nextIdx = idx + direction
   if (nextIdx < 0 || nextIdx >= list.length) return
-  router.replace(`/bets/${list[nextIdx]!.id}`)
+  router.replace(`/${marketStore.market!.id}/bets/${list[nextIdx]!.id}`)
 }
 
 const { swipeDeltaX } = useSwipe({

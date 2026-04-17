@@ -7,10 +7,10 @@ import { useBetsStore } from '@/stores/bets'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
-const { goBack } = useSmartBack('/bets')
 const marketStore = useMarketStore()
 const betsStore = useBetsStore()
 const authStore = useAuthStore()
+const { goBack } = useSmartBack(`/${marketStore.market?.id ?? ''}/bets`)
 
 const question = ref('')
 const type = ref<'binary' | 'multiple_choice'>('binary')
@@ -71,7 +71,7 @@ async function handleSubmit() {
       excludedMembers: excludedMembers.value,
       closesAt: new Date(closesAt.value).toISOString(),
     })
-    router.push('/bets')
+    router.push(`/${marketStore.market!.id}/bets`)
   } finally {
     submitting.value = false
   }

@@ -5,35 +5,11 @@ import { useMarketStore } from '@/stores/market'
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
-    {
-      path: '/',
-      name: 'home',
-      component: () => import('@/views/MarketView.vue'),
-    },
+    // --- Static routes (defined first to avoid /:marketId collision) ---
     {
       path: '/join',
       name: 'join',
       component: () => import('@/views/JoinView.vue'),
-    },
-    {
-      path: '/bets',
-      name: 'bets',
-      component: () => import('@/views/BetListView.vue'),
-    },
-    {
-      path: '/bets/create',
-      name: 'create-bet',
-      component: () => import('@/views/CreateBetView.vue'),
-    },
-    {
-      path: '/bets/:id',
-      name: 'bet-detail',
-      component: () => import('@/views/BetDetailView.vue'),
-    },
-    {
-      path: '/stats/:userId?',
-      name: 'stats',
-      component: () => import('@/views/PlayerStatsView.vue'),
     },
     {
       path: '/invite/:code',
@@ -45,6 +21,38 @@ const router = createRouter({
       name: 'login',
       component: () => import('@/views/LoginView.vue'),
       meta: { public: true },
+    },
+    // --- Market-scoped routes ---
+    {
+      path: '/:marketId',
+      name: 'home',
+      component: () => import('@/views/MarketView.vue'),
+    },
+    {
+      path: '/:marketId/bets',
+      name: 'bets',
+      component: () => import('@/views/BetListView.vue'),
+    },
+    {
+      path: '/:marketId/bets/create',
+      name: 'create-bet',
+      component: () => import('@/views/CreateBetView.vue'),
+    },
+    {
+      path: '/:marketId/bets/:id',
+      name: 'bet-detail',
+      component: () => import('@/views/BetDetailView.vue'),
+    },
+    {
+      path: '/:marketId/stats/:userId?',
+      name: 'stats',
+      component: () => import('@/views/PlayerStatsView.vue'),
+    },
+    // Root redirect (handled by beforeEach guard after markets are loaded)
+    {
+      path: '/',
+      name: 'root',
+      component: () => import('@/views/JoinView.vue'),
     },
   ],
 })
@@ -71,27 +79,37 @@ router.beforeEach(async (to) => {
     const marketStore = useMarketStore()
     if (marketStore.loading) {
       await Promise.race([
-        marketStore.loadUserMarket(),
+        marketStore.loadUserMarkets(),
         new Promise<void>((resolve) => setTimeout(resolve, 5000)),
       ])
     }
 
     // Let InviteView handle the join flow with its own loading UI
     if (to.name === 'invite') {
-      if (marketStore.hasMarket) {
-        return { path: '/' }
-      }
       return
     }
 
-    // Redirect to /join if user has no market (unless already going there)
+    // Redirect to /join if user has no markets (unless already going there)
     if (!marketStore.hasMarket && to.name !== 'join') {
       return { name: 'join' }
     }
 
-    // Redirect away from /join if user already has a market
-    if (marketStore.hasMarket && to.name === 'join') {
-      return { path: '/' }
+    // Redirect root to the active (last-used) market
+    if (to.name === 'root' && marketStore.hasMarket) {
+      return { path: `/${marketStore.market!.id}` }
+    }
+
+    // For market-scoped routes, sync the active market
+    const routeMarketId = to.params.marketId as string | undefined
+    if (routeMarketId && marketStore.hasMarket) {
+      const isMember = marketStore.markets.some((m) => m.id === routeMarketId)
+      if (!isMember) {
+        // User is not a member of this market — redirect to their active market
+        return { path: `/${marketStore.market!.id}` }
+      }
+      if (routeMarketId !== marketStore.activeMarketId) {
+        await marketStore.switchMarket(routeMarketId)
+      }
     }
   }
 })

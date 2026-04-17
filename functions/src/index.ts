@@ -141,16 +141,10 @@ async function sendPushToUsers(
 
   const messaging = getMessaging()
 
-  // Collect all FCM tokens for target users
+  // Collect all FCM tokens for target users from top-level users collection
   const tokenDocs: { ref: FirebaseFirestore.DocumentReference; token: string }[] = []
   for (const userId of userIds) {
-    const tokensSnap = await db
-      .collection('markets')
-      .doc(marketId)
-      .collection('members')
-      .doc(userId)
-      .collection('fcmTokens')
-      .get()
+    const tokensSnap = await db.collection('users').doc(userId).collection('fcmTokens').get()
     for (const doc of tokensSnap.docs) {
       const token = doc.data().token
       if (typeof token === 'string' && token.length > 0) {
@@ -176,7 +170,9 @@ async function sendPushToUsers(
               body: notification.body,
               icon: '/logo-192.png',
             },
-            fcmOptions: { link: data.betId ? `/bets/${data.betId}` : '/' },
+            fcmOptions: {
+              link: data.betId && data.marketId ? `/${data.marketId}/bets/${data.betId}` : '/',
+            },
           },
         })
         .catch(async (err: { code?: string }) => {
@@ -212,14 +208,7 @@ export const registerFcmToken = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'FCM token is required')
   }
 
-  // Find user's market membership
-  const memberSnap = await db.collectionGroup('members').where('userId', '==', uid).limit(1).get()
-  if (memberSnap.empty || !memberSnap.docs[0]) {
-    throw new HttpsError('not-found', 'Not a member of any market')
-  }
-
-  const memberRef = memberSnap.docs[0].ref
-  const tokensRef = memberRef.collection('fcmTokens')
+  const tokensRef = db.collection('users').doc(uid).collection('fcmTokens')
 
   // Check if token already exists to avoid duplicates
   const existing = await tokensRef.where('token', '==', token).limit(1).get()
@@ -243,12 +232,6 @@ export const createMarket = onCall(async (request) => {
   const db = getDb(database)
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     throw new HttpsError('invalid-argument', 'Market name is required')
-  }
-
-  // Check user isn't already in a market
-  const existing = await db.collectionGroup('members').where('userId', '==', uid).limit(1).get()
-  if (!existing.empty) {
-    throw new HttpsError('already-exists', 'You are already in a market')
   }
 
   const inviteCode = generateInviteCode()
@@ -285,10 +268,23 @@ export const joinMarket = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'Invite code is required')
   }
 
-  // Check user isn't already in a market
-  const existing = await db.collectionGroup('members').where('userId', '==', uid).limit(1).get()
-  if (!existing.empty) {
-    throw new HttpsError('already-exists', 'You are already in a market')
+  // Check user isn't already a member of this specific market
+  const marketsSnap_check = await db
+    .collection('markets')
+    .where('inviteCode', '==', inviteCode.trim())
+    .limit(1)
+    .get()
+  if (!marketsSnap_check.empty) {
+    const targetMarketId = marketsSnap_check.docs[0]!.id
+    const alreadyMember = await db
+      .collection('markets')
+      .doc(targetMarketId)
+      .collection('members')
+      .doc(uid)
+      .get()
+    if (alreadyMember.exists) {
+      return { marketId: targetMarketId }
+    }
   }
 
   // Find market by invite code
@@ -441,7 +437,7 @@ export const createBet = onCall(async (request) => {
       title: `${creatorName} created a bet`,
       body: `${question.trim()}${timeLeft ? ` · ${timeLeft}` : ''}`,
     },
-    { betId: betRef.id, type: 'bet_created' },
+    { betId: betRef.id, type: 'bet_created', marketId },
   ).catch(() => {})
 
   return { betId: betRef.id }
@@ -758,7 +754,7 @@ export const resolveBet = onCall(async (request) => {
         title: `Resolved: "${pushData.winningOutcome}" won!`,
         body: `Cost: $${user.totalCost.toFixed(2)} · Payout: $${user.payout.toFixed(2)} · Profit: ${profitStr}`,
       },
-      { betId, type: 'bet_resolved' },
+      { betId, type: 'bet_resolved', marketId },
     ).catch(() => {})
   }
 
@@ -851,7 +847,7 @@ export const cancelBet = onCall(async (request) => {
         title: 'Bet cancelled',
         body: `"${cancelData.question}" · Refunded: $${user.refundAmount.toFixed(2)}`,
       },
-      { betId, type: 'bet_cancelled' },
+      { betId, type: 'bet_cancelled', marketId },
     ).catch(() => {})
   }
 
@@ -951,7 +947,7 @@ export const checkResolutionNeeded = onSchedule('every 5 minutes', async () => {
             title: 'Betting closed',
             body: `"${bet.question}" needs resolution`,
           },
-          { betId: betDoc.id, type: 'resolution_needed' },
+          { betId: betDoc.id, type: 'resolution_needed', marketId },
         ).catch(() => {})
       }
     }

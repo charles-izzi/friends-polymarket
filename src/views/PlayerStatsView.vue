@@ -10,12 +10,12 @@ import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
 
 const router = useRouter()
-const { goBack } = useSmartBack('/')
 const route = useRoute()
 const statsStore = useStatsStore()
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const betsStore = useBetsStore()
+const { goBack } = useSmartBack(`/${marketStore.market?.id ?? ''}`)
 
 const targetUserId = computed(() => (route.params.userId as string) || authStore.user?.uid || '')
 const isOwnProfile = computed(() => targetUserId.value === authStore.user?.uid)
@@ -161,7 +161,7 @@ function fmtPct(v: number): string {
               v-for="h in currentHoldings"
               :key="`${h.betId}-${h.outcome}`"
               class="clickable-row"
-              @click="router.push(`/bets/${h.betId}`)"
+              @click="router.push(`/${marketStore.market!.id}/bets/${h.betId}`)"
             >
               <td class="text-body-2" style="max-width: 180px">
                 <span class="d-inline-block text-truncate" style="max-width: 100%">
@@ -208,7 +208,7 @@ function fmtPct(v: number): string {
                 v-for="r in stats!.resolvedBets"
                 :key="r.betId"
                 class="clickable-row"
-                @click="router.push(`/bets/${r.betId}`)"
+                @click="router.push(`/${marketStore.market!.id}/bets/${r.betId}`)"
               >
                 <td class="text-body-2" style="max-width: 200px">
                   <span class="d-inline-block text-truncate" style="max-width: 100%">

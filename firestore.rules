@@ -49,10 +49,21 @@ service cloud.firestore {
     }
 
     // CollectionGroup rule for 'members' — allows the collectionGroup query
-    // used to find which market a user belongs to. Only lets a user read
-    // their own member document across all markets.
+    // used to find which markets a user belongs to. Only lets a user read
+    // their own member documents across all markets.
     match /{path=**}/members/{memberId} {
       allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // Users collection — stores FCM tokens per user (top-level, not per-market).
+    // Each user can only read/write their own document and subcollections.
+    match /users/{userId} {
+      allow read, write: if false; // user doc itself is admin-only
+
+      match /fcmTokens/{tokenId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if false; // managed by cloud functions
+      }
     }
   }
 }

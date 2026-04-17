@@ -2,26 +2,33 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
   collection,
+  doc,
   query,
   where,
   collectionGroup,
   onSnapshot,
+  getDoc,
   getDocs,
-  limit,
 } from 'firebase/firestore'
 import { getFunctions, httpsCallable } from 'firebase/functions'
 import { db, dbName, requestPushPermission } from '@/firebase'
 import { useAuthStore } from '@/stores/auth'
 import type { Market, Member } from '@/types'
 
+const ACTIVE_MARKET_KEY = 'activeMarketId'
+
 export const useMarketStore = defineStore('market', () => {
-  const market = ref<Market | null>(null)
+  const markets = ref<Market[]>([])
+  const activeMarketId = ref<string | null>(localStorage.getItem(ACTIVE_MARKET_KEY))
   const members = ref<Member[]>([])
   const loading = ref(true)
   const error = ref('')
 
   const functions = getFunctions()
-  const hasMarket = computed(() => !!market.value)
+
+  const market = computed(() => markets.value.find((m) => m.id === activeMarketId.value) ?? null)
+  const hasMarket = computed(() => markets.value.length > 0)
+  const hasMultipleMarkets = computed(() => markets.value.length > 1)
   const currentMember = computed(() => {
     const authStore = useAuthStore()
     return members.value.find((m) => m.userId === authStore.user?.uid) ?? null
@@ -30,11 +37,12 @@ export const useMarketStore = defineStore('market', () => {
   let unsubMarket: (() => void) | null = null
   let unsubMembers: (() => void) | null = null
 
-  async function loadUserMarket() {
+  async function loadUserMarkets() {
     const authStore = useAuthStore()
     if (!authStore.user) {
-      market.value = null
+      markets.value = []
       members.value = []
+      activeMarketId.value = null
       loading.value = false
       return
     }
@@ -43,88 +51,122 @@ export const useMarketStore = defineStore('market', () => {
     error.value = ''
 
     try {
-      // Find which market this user belongs to via collectionGroup query
+      // Find all markets this user belongs to via collectionGroup query
       const memberQuery = query(
         collectionGroup(db, 'members'),
         where('userId', '==', authStore.user.uid),
-        limit(1),
       )
       const memberSnap = await getDocs(memberQuery)
 
-      if (memberSnap.empty || !memberSnap.docs[0]) {
-        market.value = null
+      if (memberSnap.empty) {
+        markets.value = []
         members.value = []
+        activeMarketId.value = null
         loading.value = false
         return
       }
 
-      // The member doc path is markets/{marketId}/members/{userId}
-      const memberDoc = memberSnap.docs[0]
-      if (!memberDoc) {
-        loading.value = false
-        return
+      // Load all market docs
+      const marketIds = memberSnap.docs.map((d) => d.ref.parent.parent!.id)
+      const marketDocs = await Promise.all(marketIds.map((id) => getDoc(doc(db, 'markets', id))))
+      markets.value = marketDocs
+        .filter((d) => d.exists())
+        .map((d) => ({ id: d.id, ...d.data() }) as Market)
+
+      // If saved activeMarketId not in the list, pick the first one
+      if (!activeMarketId.value || !marketIds.includes(activeMarketId.value)) {
+        activeMarketId.value = marketIds[0] ?? null
       }
-      const marketRef = memberDoc.ref.parent.parent!
-      const marketId = marketRef.id
 
-      // Listen to market doc, waiting for first snapshot before resolving
-      const marketReady = new Promise<void>((resolve) => {
-        unsubMarket = onSnapshot(marketRef, (snap) => {
-          if (snap.exists()) {
-            market.value = { id: snap.id, ...snap.data() } as Market
-          }
-          resolve()
-        })
-      })
+      if (activeMarketId.value) {
+        localStorage.setItem(ACTIVE_MARKET_KEY, activeMarketId.value)
+        await listenToActiveMarket(activeMarketId.value)
+      }
 
-      // Listen to members collection, waiting for first snapshot before resolving
-      const membersReady = new Promise<void>((resolve) => {
-        unsubMembers = onSnapshot(collection(db, 'markets', marketId, 'members'), (snap) => {
-          members.value = snap.docs.map((d) => ({ userId: d.id, ...d.data() }) as Member)
-          resolve()
-        })
-      })
-
-      await Promise.all([marketReady, membersReady])
-
-      // Register/refresh push token on every load — the token may become stale
-      // after SW updates, app reinstalls, or browser restarts
+      // Register/refresh push token on every load
       if (typeof Notification !== 'undefined' && Notification.permission !== 'denied') {
         requestPushPermission()
       }
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : 'Failed to load market'
+      error.value = e instanceof Error ? e.message : 'Failed to load markets'
     } finally {
       loading.value = false
     }
   }
 
-  async function createMarket(name: string) {
+  /** Set up realtime listeners for a specific market's doc and members */
+  async function listenToActiveMarket(marketId: string) {
+    // Tear down previous listeners
+    unsubMarket?.()
+    unsubMembers?.()
+
+    const marketRef = doc(db, 'markets', marketId)
+    const marketReady = new Promise<void>((resolve) => {
+      unsubMarket = onSnapshot(marketRef, (snap) => {
+        if (snap.exists()) {
+          const data = { id: snap.id, ...snap.data() } as Market
+          // Update in the markets array too
+          const idx = markets.value.findIndex((m) => m.id === snap.id)
+          if (idx >= 0) {
+            markets.value = markets.value.map((m, i) => (i === idx ? data : m))
+          }
+        }
+        resolve()
+      })
+    })
+
+    const membersReady = new Promise<void>((resolve) => {
+      unsubMembers = onSnapshot(collection(db, 'markets', marketId, 'members'), (snap) => {
+        members.value = snap.docs.map((d) => ({ userId: d.id, ...d.data() }) as Member)
+        resolve()
+      })
+    })
+
+    await Promise.all([marketReady, membersReady])
+  }
+
+  async function switchMarket(marketId: string) {
+    if (marketId === activeMarketId.value) return
+    if (!markets.value.find((m) => m.id === marketId)) return
+
+    activeMarketId.value = marketId
+    localStorage.setItem(ACTIVE_MARKET_KEY, marketId)
+    members.value = []
+    await listenToActiveMarket(marketId)
+  }
+
+  async function createMarket(name: string): Promise<string> {
     error.value = ''
     try {
       const fn = httpsCallable<
         { name: string; database: string },
         { marketId: string; inviteCode: string }
       >(functions, 'createMarket')
-      await fn({ name, database: dbName })
-      await loadUserMarket()
+      const result = await fn({ name, database: dbName })
+      const newMarketId = result.data.marketId
+      await loadUserMarkets()
+      await switchMarket(newMarketId)
       requestPushPermission()
+      return newMarketId
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to create market'
       throw e
     }
   }
 
-  async function joinMarket(inviteCode: string) {
+  async function joinMarket(inviteCode: string): Promise<string> {
     error.value = ''
     try {
       const fn = httpsCallable<{ inviteCode: string; database: string }, { marketId: string }>(
         functions,
         'joinMarket',
       )
-      await fn({ inviteCode, database: dbName })
-      await loadUserMarket()
+      const result = await fn({ inviteCode, database: dbName })
+      const newMarketId = result.data.marketId
+      await loadUserMarkets()
+      await switchMarket(newMarketId)
       requestPushPermission()
+      return newMarketId
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to join market'
       throw e
@@ -138,8 +180,25 @@ export const useMarketStore = defineStore('market', () => {
         functions,
         'leaveMarket',
       )
-      await fn({ marketId: market.value!.id, database: dbName })
-      cleanup()
+      const leftMarketId = market.value!.id
+      await fn({ marketId: leftMarketId, database: dbName })
+
+      // Remove from local list
+      markets.value = markets.value.filter((m) => m.id !== leftMarketId)
+
+      if (markets.value.length > 0) {
+        // Switch to another market
+        const nextId = markets.value[0]!.id
+        activeMarketId.value = nextId
+        localStorage.setItem(ACTIVE_MARKET_KEY, nextId)
+        await listenToActiveMarket(nextId)
+      } else {
+        // No markets left
+        cleanupListeners()
+        activeMarketId.value = null
+        localStorage.removeItem(ACTIVE_MARKET_KEY)
+        members.value = []
+      }
       loading.value = false
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to leave market'
@@ -147,24 +206,34 @@ export const useMarketStore = defineStore('market', () => {
     }
   }
 
-  function cleanup() {
+  function cleanupListeners() {
     unsubMarket?.()
     unsubMembers?.()
     unsubMarket = null
     unsubMembers = null
-    market.value = null
+  }
+
+  function cleanup() {
+    cleanupListeners()
+    markets.value = []
+    market // computed, no reset needed
     members.value = []
+    activeMarketId.value = null
     loading.value = true
   }
 
   return {
     market,
+    markets,
+    activeMarketId,
     members,
     loading,
     error,
     hasMarket,
+    hasMultipleMarkets,
     currentMember,
-    loadUserMarket,
+    loadUserMarkets,
+    switchMarket,
     createMarket,
     joinMarket,
     leaveMarket,

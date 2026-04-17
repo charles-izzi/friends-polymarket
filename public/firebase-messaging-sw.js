@@ -42,7 +42,7 @@ self.addEventListener('push', (event) => {
       return self.registration.showNotification(title, {
         body,
         icon: '/logo-192.png',
-        data: { betId: pushData.betId, type: pushData.type },
+        data: { betId: pushData.betId, marketId: pushData.marketId, type: pushData.type },
       })
     }),
   )
@@ -74,7 +74,8 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close()
 
   const betId = event.notification.data?.betId
-  const url = betId ? `/bets/${betId}` : '/'
+  const marketId = event.notification.data?.marketId
+  const url = betId && marketId ? `/${marketId}/bets/${betId}` : '/'
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

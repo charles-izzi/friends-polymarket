@@ -154,7 +154,7 @@ const rankYMax = computed(() => marketStore.members.length || 2)
           color="primary"
           size="small"
           append-icon="mdi-arrow-right"
-          @click="router.push('/bets')"
+          @click="router.push(`/${marketStore.market!.id}/bets`)"
         >
           See all
         </v-btn>
@@ -167,7 +167,10 @@ const rankYMax = computed(() => marketStore.members.length || 2)
       <v-list v-else-if="topBets.length" lines="two" density="comfortable">
         <template v-for="(bet, idx) in topBets" :key="bet.id">
           <v-divider v-if="idx > 0" />
-          <v-list-item class="cursor-pointer pr-2" @click="router.push(`/bets/${bet.id}`)">
+          <v-list-item
+            class="cursor-pointer pr-2"
+            @click="router.push(`/${marketStore.market!.id}/bets/${bet.id}`)"
+          >
             <v-list-item-title class="text-body-2 font-weight-medium" style="margin-right: 12px">
               {{ bet.question }}
             </v-list-item-title>
@@ -224,7 +227,7 @@ const rankYMax = computed(() => marketStore.members.length || 2)
               :key="member.userId"
               :title="member.displayName"
               class="cursor-pointer"
-              @click="router.push(`/stats/${member.userId}`)"
+              @click="router.push(`/${marketStore.market!.id}/stats/${member.userId}`)"
             >
               <v-list-item-subtitle>
                 <span>

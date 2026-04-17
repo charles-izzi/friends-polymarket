@@ -14,8 +14,8 @@ const submitting = ref(false)
 async function handleJoin() {
   submitting.value = true
   try {
-    await marketStore.joinMarket(inviteCode.value)
-    router.replace('/')
+    const marketId = await marketStore.joinMarket(inviteCode.value)
+    router.replace(`/${marketId}`)
   } finally {
     submitting.value = false
   }
@@ -24,8 +24,8 @@ async function handleJoin() {
 async function handleCreate() {
   submitting.value = true
   try {
-    await marketStore.createMarket(marketName.value)
-    router.replace('/')
+    const marketId = await marketStore.createMarket(marketName.value)
+    router.replace(`/${marketId}`)
   } finally {
     submitting.value = false
   }

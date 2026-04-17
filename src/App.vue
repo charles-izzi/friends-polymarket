@@ -92,7 +92,7 @@ function drawerMemberName(userId: string): string {
 
 function navigateToBet(betId: string) {
   messagesDrawer.value = false
-  router.push(`/bets/${betId}`)
+  router.push(`/${marketStore.market?.id}/bets/${betId}`)
 }
 
 function betQuestion(betId: string): string {
@@ -157,7 +157,11 @@ async function handleLeaveMarket() {
   leaving.value = true
   try {
     await marketStore.leaveMarket()
-    router.replace('/join')
+    if (marketStore.hasMarket) {
+      router.replace(`/${marketStore.market!.id}`)
+    } else {
+      router.replace('/join')
+    }
   } finally {
     leaving.value = false
     leaveConfirm.value = false
@@ -185,7 +189,7 @@ const showSnackbar = computed({
 function onNotificationClick() {
   const n = notificationsStore.current
   if (n) {
-    router.push(`/bets/${n.betId}`)
+    router.push(`/${marketStore.market?.id}/bets/${n.betId}`)
     notificationsStore.dismiss()
   }
 }
@@ -252,7 +256,7 @@ onUnmounted(() => {
             <v-list-item
               prepend-icon="mdi-chart-box"
               title="My Stats"
-              to="/stats"
+              :to="marketStore.market ? `/${marketStore.market.id}/stats` : '/'"
               @click="userMenu = false"
             />
             <v-list-item
@@ -285,29 +289,54 @@ onUnmounted(() => {
 
     <v-navigation-drawer v-if="authStore.isAuthenticated" v-model="drawer" temporary>
       <v-list density="compact" nav>
+        <template v-if="marketStore.hasMultipleMarkets">
+          <v-list-subheader class="text-uppercase font-weight-bold"> Markets </v-list-subheader>
+          <v-list-item
+            v-for="m in marketStore.markets"
+            :key="m.id"
+            :title="m.name"
+            :active="m.id === marketStore.activeMarketId"
+            prepend-icon="mdi-store"
+            :to="`/${m.id}`"
+            @click="drawer = false"
+          />
+          <v-divider class="my-1" />
+        </template>
         <v-list-subheader class="text-uppercase font-weight-bold">
           {{ marketStore.market?.name ?? 'Market' }}
         </v-list-subheader>
-        <v-list-item prepend-icon="mdi-store" title="Market" to="/" @click="drawer = false" />
+        <v-list-item
+          prepend-icon="mdi-store"
+          title="Market"
+          :to="marketStore.market ? `/${marketStore.market.id}` : '/'"
+          @click="drawer = false"
+        />
         <v-list-item
           class="ml-4"
           prepend-icon="mdi-chart-line"
           title="Bets"
-          to="/bets"
+          :to="marketStore.market ? `/${marketStore.market.id}/bets` : '/'"
           @click="drawer = false"
         />
         <v-list-item
           class="ml-4"
           prepend-icon="mdi-plus"
           title="Create Bet"
-          to="/bets/create"
+          :to="marketStore.market ? `/${marketStore.market.id}/bets/create` : '/'"
           @click="drawer = false"
         />
         <v-list-item
           class="ml-4"
           prepend-icon="mdi-chart-box"
           title="My Stats"
-          to="/stats"
+          :to="marketStore.market ? `/${marketStore.market.id}/stats` : '/'"
+          @click="drawer = false"
+        />
+        <v-divider class="my-1" />
+        <v-list-item
+          prepend-icon="mdi-plus-circle-outline"
+          title="Join / Create Market"
+          to="/join"
           @click="drawer = false"
         />
       </v-list>
