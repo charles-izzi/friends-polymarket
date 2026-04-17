@@ -191,8 +191,6 @@ function onSliderUpdate(index: number, val: number) {
   }
 }
 
-
-
 function resetSliders() {
   userEdited.value = false
   syncDesiredShares()
@@ -762,10 +760,7 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div
-              v-if="canTrade"
-              class="thumb-only-slider"
-            >
+            <div v-if="canTrade" class="thumb-only-slider">
               <v-slider
                 :model-value="desiredShares[i] ?? 0"
                 @update:model-value="(val: number) => onSliderUpdate(i, val)"
