@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useSmartBack } from '@/composables/useSmartBack'
+import { useSwipe } from '@/composables/useSwipe'
+import { useFilteredBets } from '@/composables/useFilteredBets'
 import { useBetsStore } from '@/stores/bets'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
@@ -11,11 +13,30 @@ import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
 
 const route = useRoute()
+const router = useRouter()
 const { goBack } = useSmartBack('/bets')
 const betsStore = useBetsStore()
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const commentsStore = useCommentsStore()
+const { sortedBets: filteredBetList } = useFilteredBets()
+
+// Swipe navigation between bets
+const currentIndex = computed(() => filteredBetList.value.findIndex((b) => b.id === betId.value))
+
+function navigateToBet(direction: 1 | -1) {
+  const list = filteredBetList.value
+  if (list.length === 0) return
+  const idx = currentIndex.value
+  const nextIdx = idx + direction
+  if (nextIdx < 0 || nextIdx >= list.length) return
+  router.replace(`/bets/${list[nextIdx]!.id}`)
+}
+
+useSwipe({
+  onSwipeLeft: () => navigateToBet(1),
+  onSwipeRight: () => navigateToBet(-1),
+})
 
 const betId = computed(() => route.params.id as string)
 const bet = computed(() => betsStore.bets.find((m) => m.id === betId.value) ?? null)
@@ -170,17 +191,7 @@ function onSliderUpdate(index: number, val: number) {
   }
 }
 
-/** Block mousedown/touchstart unless it originated on the slider thumb */
-function guardSliderEvent(e: MouseEvent | TouchEvent) {
-  const target = e.target as HTMLElement | null
-  if (!target?.closest('.v-slider-thumb')) {
-    e.stopPropagation()
-    // Only preventDefault for mouse events; touch needs default for scrolling
-    if (e instanceof MouseEvent) {
-      e.preventDefault()
-    }
-  }
-}
+
 
 function resetSliders() {
   userEdited.value = false
@@ -489,7 +500,7 @@ onUnmounted(() => {
         </v-tab>
       </v-tabs>
 
-      <v-window v-model="detailTab" class="mb-4">
+      <v-window v-model="detailTab" class="mb-4" :touch="false">
         <v-window-item value="chart">
           <div class="mt-2 mb-4" style="min-height: 180px">
             <SvgLineChart
@@ -754,8 +765,6 @@ onUnmounted(() => {
             <div
               v-if="canTrade"
               class="thumb-only-slider"
-              @mousedown.capture="guardSliderEvent"
-              @touchstart.capture="guardSliderEvent"
             >
               <v-slider
                 :model-value="desiredShares[i] ?? 0"
@@ -1063,8 +1072,11 @@ onUnmounted(() => {
 }
 
 /* Only allow slider interaction via the thumb – ignore track clicks/taps */
-.thumb-only-slider :deep(*) {
-  cursor: default !important;
+.thumb-only-slider :deep(.v-slider) {
+  pointer-events: none !important;
+}
+.thumb-only-slider :deep(.v-slider-thumb) {
+  pointer-events: auto !important;
 }
 .thumb-only-slider :deep(.v-slider-thumb__surface) {
   width: 28px;
