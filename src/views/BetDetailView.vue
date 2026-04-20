@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSmartBack } from '@/composables/useSmartBack'
 import { useSwipe } from '@/composables/useSwipe'
@@ -60,6 +61,7 @@ const now = ref(Date.now())
 let nowInterval: ReturnType<typeof setInterval> | null = null
 
 const newCommentText = ref('')
+const sendBtnRef = ref<ComponentPublicInstance | null>(null)
 
 const effectiveStatus = computed(() => {
   if (!bet.value) return 'open'
@@ -346,12 +348,24 @@ function setupBetListeners(id: string) {
   userEdited.value = false
 }
 
+function updateSendButtonRect() {
+  const el = sendBtnRef.value?.$el as HTMLElement | undefined
+  if (!el) {
+    commentsStore.submitButtonRect = null
+    return
+  }
+  const r = el.getBoundingClientRect()
+  commentsStore.submitButtonRect = { top: r.top, right: r.right, bottom: r.bottom, left: r.left }
+}
+
 onMounted(() => {
   if (!betsStore.bets.length) {
     betsStore.listenToBets()
   }
   setupBetListeners(betId.value)
   nowInterval = setInterval(() => (now.value = Date.now()), 60000)
+  window.addEventListener('scroll', updateSendButtonRect, { passive: true, capture: true })
+  window.addEventListener('resize', updateSendButtonRect, { passive: true })
 })
 
 // Re-establish listeners when navigating between bet detail pages
@@ -367,6 +381,9 @@ onUnmounted(() => {
   betsStore.stopListeningToBet()
   commentsStore.stopListening()
   commentsStore.markSeen(betId.value)
+  commentsStore.submitButtonRect = null
+  window.removeEventListener('scroll', updateSendButtonRect, true)
+  window.removeEventListener('resize', updateSendButtonRect)
   if (nowInterval) clearInterval(nowInterval)
 })
 </script>
@@ -970,6 +987,7 @@ onUnmounted(() => {
               @keydown.enter.prevent="handlePostComment"
             />
             <v-btn
+              ref="sendBtnRef"
               icon="mdi-send"
               color="primary"
               variant="tonal"

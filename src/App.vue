@@ -6,6 +6,7 @@ import { useBetsStore } from '@/stores/bets'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useCommentsStore } from '@/stores/comments'
 import { computed, ref, onMounted, onUnmounted } from 'vue'
+import type { ComponentPublicInstance, CSSProperties } from 'vue'
 import { useDevDb } from '@/firebase'
 import type { Comment } from '@/types'
 
@@ -31,6 +32,45 @@ const drawerLoading = ref(false)
 const showFab = computed(
   () => authStore.isAuthenticated && marketStore.hasMarket && commentsStore.unseenCount > 0,
 )
+
+const fabRef = ref<ComponentPublicInstance | null>(null)
+
+const fabStyle = computed((): CSSProperties => {
+  const base: CSSProperties = {
+    position: 'fixed',
+    bottom: '24px',
+    right: '24px',
+    zIndex: 1000,
+    transition: 'opacity 0.2s ease',
+  }
+
+  const btnRect = commentsStore.submitButtonRect
+  if (!btnRect) return { ...base, opacity: 1, pointerEvents: 'auto' }
+
+  const fabEl = fabRef.value?.$el as HTMLElement | undefined
+  if (!fabEl) return { ...base, opacity: 1, pointerEvents: 'auto' }
+
+  const fabRect = fabEl.getBoundingClientRect()
+
+  // Check horizontal proximity
+  const hOverlap = Math.min(fabRect.right, btnRect.right) - Math.max(fabRect.left, btnRect.left)
+  if (hOverlap <= 0) return { ...base, opacity: 1, pointerEvents: 'auto' }
+
+  // Check vertical overlap/gap
+  const vOverlap = Math.min(fabRect.bottom, btnRect.bottom) - Math.max(fabRect.top, btnRect.top)
+  if (vOverlap > 0) {
+    // Overlapping — hide completely
+    return { ...base, opacity: 0, pointerEvents: 'none', visibility: 'hidden' }
+  }
+
+  // No vertical overlap — vOverlap is negative, gap = -vOverlap
+  const gap = -vOverlap
+  const fadeDistance = 100
+  if (gap >= fadeDistance) return { ...base, opacity: 1, pointerEvents: 'auto' }
+
+  const opacity = gap / fadeDistance
+  return { ...base, opacity, pointerEvents: opacity < 0.3 ? 'none' : 'auto' }
+})
 
 async function openMessagesDrawer() {
   const betIds = [...commentsStore.unseenBetIds]
@@ -420,10 +460,11 @@ onUnmounted(() => {
     <!-- New Messages FAB -->
     <v-btn
       v-if="showFab"
+      ref="fabRef"
       icon
       color="secondary"
       size="large"
-      style="position: fixed; bottom: 24px; right: 24px; z-index: 1000"
+      :style="fabStyle"
       @click="openMessagesDrawer"
     >
       <v-badge :content="commentsStore.unseenCount" color="error" floating>
