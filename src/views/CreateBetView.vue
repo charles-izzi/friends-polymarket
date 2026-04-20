@@ -15,7 +15,6 @@ const { goBack } = useSmartBack(`/${marketStore.market?.id ?? ''}/bets`)
 const question = ref('')
 const type = ref<'binary' | 'multiple_choice'>('binary')
 const outcomes = ref(['Yes', 'No'])
-const customOutcome = ref('')
 const excludedMembers = ref<string[]>([])
 const closesAt = ref('')
 const submitting = ref(false)
@@ -27,47 +26,48 @@ const questionRules = computed(() =>
 const closesAtRules = computed(() =>
   validated.value && !closesAt.value ? ['Close date is required'] : [],
 )
+const filledOutcomes = computed(() => outcomes.value.filter((o) => o.trim()))
 const outcomesError = computed(() =>
-  validated.value && type.value === 'multiple_choice' && outcomes.value.length < 2
-    ? 'At least 2 outcomes are required'
+  validated.value && type.value === 'multiple_choice' && filledOutcomes.value.length < 2
+    ? 'At least 2 non-empty outcomes are required'
     : '',
 )
 
-const otherMembers = computed(() =>
-  marketStore.members.filter((m) => m.userId !== authStore.user?.uid),
-)
+const otherMembers = computed(() => marketStore.members)
 
 function addOutcome() {
-  const val = customOutcome.value.trim()
-  if (val && !outcomes.value.includes(val)) {
-    outcomes.value.push(val)
-    customOutcome.value = ''
-  }
+  outcomes.value.push('')
 }
 
 function removeOutcome(index: number) {
-  if (outcomes.value.length > 2) {
-    outcomes.value.splice(index, 1)
-  }
+  outcomes.value.splice(index, 1)
+}
+
+function moveOutcome(index: number, direction: -1 | 1) {
+  const target = index + direction
+  if (target < 0 || target >= outcomes.value.length) return
+  const arr = outcomes.value
+  ;[arr[index], arr[target]] = [arr[target]!, arr[index]!]
 }
 
 function onTypeChange(newType: 'binary' | 'multiple_choice') {
   if (newType === 'binary') {
     outcomes.value = ['Yes', 'No']
   } else {
-    outcomes.value = []
+    outcomes.value = ['', '']
   }
 }
 
 async function handleSubmit() {
   validated.value = true
-  if (!question.value.trim() || !closesAt.value || outcomes.value.length < 2) return
+  const trimmedOutcomes = outcomes.value.filter((o) => o.trim()).map((o) => o.trim())
+  if (!question.value.trim() || !closesAt.value || trimmedOutcomes.length < 2) return
   submitting.value = true
   try {
     await betsStore.createBet({
       question: question.value,
       type: type.value,
-      outcomes: outcomes.value,
+      outcomes: trimmedOutcomes,
       excludedMembers: excludedMembers.value,
       closesAt: new Date(closesAt.value).toISOString(),
     })
@@ -102,7 +102,7 @@ async function handleSubmit() {
         mandatory
         density="comfortable"
         color="primary"
-        class="mb-4"
+        class="mb-2"
         @update:model-value="onTypeChange"
       >
         <v-btn value="binary">Yes / No</v-btn>
@@ -110,37 +110,56 @@ async function handleSubmit() {
       </v-btn-toggle>
 
       <template v-if="type === 'multiple_choice'">
-        <v-card variant="outlined" class="mb-4 pa-3">
-          <p class="text-subtitle-2 mb-2">Outcomes</p>
-          <v-chip
-            v-for="(outcome, i) in outcomes"
-            :key="i"
-            :closable="outcomes.length > 2"
-            class="ma-1"
-            @click:close="removeOutcome(i)"
-          >
-            {{ outcome }}
-          </v-chip>
-          <p v-if="outcomesError" class="text-caption text-error mt-1">{{ outcomesError }}</p>
-          <div class="d-flex align-center mt-2">
+        <fieldset class="outcomes-fieldset mb-4">
+          <legend class="outcomes-legend">Outcomes</legend>
+          <div v-for="(_, i) in outcomes" :key="i" class="d-flex align-center mb-2">
+            <div class="d-flex flex-column mr-1">
+              <v-btn
+                icon="mdi-chevron-up"
+                size="x-small"
+                variant="text"
+                density="compact"
+                :disabled="i === 0"
+                @click="moveOutcome(i, -1)"
+              />
+              <v-btn
+                icon="mdi-chevron-down"
+                size="x-small"
+                variant="text"
+                density="compact"
+                :disabled="i === outcomes.length - 1"
+                @click="moveOutcome(i, 1)"
+              />
+            </div>
             <v-text-field
-              v-model="customOutcome"
-              label="Add outcome"
+              v-model="outcomes[i]"
+              :placeholder="`Option ${i + 1}`"
               variant="outlined"
               density="compact"
               hide-details
-              class="mr-2"
-              @keydown.enter.prevent="addOutcome"
+              class="flex-grow-1"
             />
             <v-btn
-              icon="mdi-plus"
+              icon="mdi-close"
               size="small"
-              color="primary"
-              :disabled="!customOutcome.trim() || outcomes.length >= 10"
-              @click="addOutcome"
+              variant="text"
+              color="error"
+              class="ml-1"
+              @click="removeOutcome(i)"
             />
           </div>
-        </v-card>
+          <p v-if="outcomesError" class="text-caption text-error mt-1">{{ outcomesError }}</p>
+          <v-btn
+            prepend-icon="mdi-plus"
+            variant="tonal"
+            size="small"
+            :disabled="outcomes.length >= 10"
+            class="mt-1"
+            @click="addOutcome"
+          >
+            Add option
+          </v-btn>
+        </fieldset>
       </template>
 
       <v-text-field
@@ -150,6 +169,7 @@ async function handleSubmit() {
         variant="outlined"
         :disabled="submitting"
         :rules="closesAtRules"
+        hide-details="auto"
         class="mb-2"
       />
 
@@ -186,3 +206,17 @@ async function handleSubmit() {
     </v-form>
   </v-container>
 </template>
+
+<style scoped>
+.outcomes-fieldset {
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.38);
+  border-radius: 4px;
+  padding: 12px;
+  margin: 0 0 16px;
+}
+.outcomes-legend {
+  font-size: 0.75rem;
+  padding: 0 5px;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+}
+</style>
