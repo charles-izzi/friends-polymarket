@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSmartBack } from '@/composables/useSmartBack'
@@ -25,19 +25,82 @@ const { goBack } = useSmartBack(`/${marketStore.market?.id ?? ''}/bets`)
 // Swipe navigation between bets
 const currentIndex = computed(() => filteredBetList.value.findIndex((b) => b.id === betId.value))
 
-function navigateToBet(direction: 1 | -1) {
+// Swipe animation state
+const ANIM_MS = 200
+type SlideState = 'idle' | 'exiting' | 'entering-setup' | 'entering'
+const slideState = ref<SlideState>('idle')
+const slideDirection = ref<1 | -1>(1)
+
+async function navigateToBet(direction: 1 | -1) {
+  if (slideState.value !== 'idle') return
   const list = filteredBetList.value
   if (list.length === 0) return
   const idx = currentIndex.value
   const nextIdx = idx + direction
   if (nextIdx < 0 || nextIdx >= list.length) return
-  router.replace(`/${marketStore.market!.id}/bets/${list[nextIdx]!.id}`)
+
+  slideDirection.value = direction
+
+  // Exit: animate current content off-screen
+  slideState.value = 'exiting'
+  await new Promise<void>((r) => setTimeout(r, ANIM_MS))
+
+  // Navigate
+  await router.replace(`/${marketStore.market!.id}/bets/${list[nextIdx]!.id}`)
+  resetSwipe()
+
+  // Position new content off-screen on opposite side (no transition)
+  slideState.value = 'entering-setup'
+  await nextTick()
+  await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+
+  // Animate in
+  slideState.value = 'entering'
+  await new Promise<void>((r) => setTimeout(r, ANIM_MS))
+
+  slideState.value = 'idle'
 }
 
-const { swipeDeltaX } = useSwipe({
+const { swipeDeltaX, resetSwipe } = useSwipe({
   ignore: '.v-slider-thumb',
   onSwipeLeft: () => navigateToBet(1),
   onSwipeRight: () => navigateToBet(-1),
+})
+
+const contentStyle = computed(() => {
+  const state = slideState.value
+  if (state === 'exiting') {
+    const x = slideDirection.value === 1 ? '-100%' : '100%'
+    return {
+      transform: `translateX(${x})`,
+      transition: `transform ${ANIM_MS}ms ease-in, opacity ${ANIM_MS}ms ease-in`,
+      opacity: '0',
+    }
+  }
+  if (state === 'entering-setup') {
+    const x = slideDirection.value === 1 ? '60%' : '-60%'
+    return {
+      transform: `translateX(${x})`,
+      transition: 'none',
+      opacity: '0',
+    }
+  }
+  if (state === 'entering') {
+    return {
+      transform: 'translateX(0)',
+      transition: `transform ${ANIM_MS}ms ease-out, opacity ${ANIM_MS}ms ease-out`,
+      opacity: '1',
+    }
+  }
+  // idle — follow finger during drag
+  if (swipeDeltaX.value !== 0) {
+    const damped = swipeDeltaX.value * 0.3
+    return {
+      transform: `translateX(${damped}px)`,
+      transition: 'none',
+    }
+  }
+  return { transition: 'transform 0.15s ease-out' }
 })
 
 const canSwipeNext = computed(
@@ -546,805 +609,824 @@ onUnmounted(() => {
     <v-icon>mdi-chevron-right</v-icon>
   </div>
 
-  <v-container max-width="700" class="pt-0">
-    <div class="d-flex align-center mb-0">
-      <v-btn icon="mdi-arrow-left" variant="text" @click="goBack()" />
-      <h1 class="text-h6 ml-2 flex-grow-1">Bet Detail</h1>
-      <template
-        v-if="isCreator && bet && (effectiveStatus === 'open' || effectiveStatus === 'closed')"
-      >
-        <v-btn
-          icon="mdi-pencil"
-          variant="tonal"
-          size="small"
-          class="ml-1"
-          @click="openEditDialog()"
+  <div class="swipe-viewport">
+    <v-container max-width="700" class="pt-0" :style="contentStyle">
+      <div class="d-flex align-center mb-0">
+        <v-btn icon="mdi-arrow-left" variant="text" @click="goBack()" />
+        <h1 class="text-h6 ml-2 flex-grow-1">Bet Detail</h1>
+        <template
+          v-if="isCreator && bet && (effectiveStatus === 'open' || effectiveStatus === 'closed')"
         >
-          <v-icon>mdi-pencil</v-icon>
-          <v-tooltip activator="parent" location="bottom">Edit Bet</v-tooltip>
-        </v-btn>
-        <v-btn
-          icon="mdi-gavel"
-          color="primary"
-          variant="tonal"
-          size="small"
-          :class="['ml-1', { 'pulse-shadow': effectiveStatus === 'closed' }]"
-          @click="showResolveDialog = true"
-        >
-          <v-icon>mdi-gavel</v-icon>
-          <v-tooltip activator="parent" location="bottom">
-            {{ effectiveStatus === 'closed' ? 'Betting closed — Resolve now!' : 'Resolve Bet' }}
-          </v-tooltip>
-        </v-btn>
-        <v-btn
-          icon="mdi-cancel"
-          color="error"
-          variant="tonal"
-          size="small"
-          class="ml-1"
-          @click="showCancelDialog = true"
-        >
-          <v-icon>mdi-cancel</v-icon>
-          <v-tooltip activator="parent" location="bottom">Cancel Bet</v-tooltip>
-        </v-btn>
-      </template>
-    </div>
-
-    <template v-if="!bet">
-      <v-progress-linear indeterminate />
-    </template>
-
-    <template v-else>
-      <!-- Question + status row -->
-      <div class="d-flex align-center ga-4 mb-2" style="margin-top: -4px">
-        <div class="flex-grow-1">
-          <p class="text-h6 font-weight-medium">{{ bet.question }}</p>
-          <v-chip v-if="isExcluded" color="error" size="small" variant="tonal" class="mt-1">
-            You are excluded
-          </v-chip>
-          <v-chip
-            v-else-if="excludedMemberNames.length > 0"
-            color="warning"
-            size="small"
+          <v-btn
+            icon="mdi-pencil"
             variant="tonal"
-            class="mt-1"
-          >
-            Excluded: {{ excludedMemberNames.join(', ') }}
-          </v-chip>
-        </div>
-        <div class="d-flex flex-column align-end justify-center ga-1 flex-shrink-0">
-          <v-chip
-            :color="
-              effectiveStatus === 'open'
-                ? 'success'
-                : effectiveStatus === 'resolved'
-                  ? 'info'
-                  : effectiveStatus === 'cancelled'
-                    ? 'error'
-                    : 'warning'
-            "
             size="small"
-            variant="tonal"
+            class="ml-1"
+            @click="openEditDialog()"
           >
-            {{ effectiveStatus }}
-          </v-chip>
-          <span v-if="timeRemaining" class="text-caption text-medium-emphasis">{{
-            timeRemaining
-          }}</span>
-        </div>
+            <v-icon>mdi-pencil</v-icon>
+            <v-tooltip activator="parent" location="bottom">Edit Bet</v-tooltip>
+          </v-btn>
+          <v-btn
+            icon="mdi-gavel"
+            color="primary"
+            variant="tonal"
+            size="small"
+            :class="['ml-1', { 'pulse-shadow': effectiveStatus === 'closed' }]"
+            @click="showResolveDialog = true"
+          >
+            <v-icon>mdi-gavel</v-icon>
+            <v-tooltip activator="parent" location="bottom">
+              {{ effectiveStatus === 'closed' ? 'Betting closed — Resolve now!' : 'Resolve Bet' }}
+            </v-tooltip>
+          </v-btn>
+          <v-btn
+            icon="mdi-cancel"
+            color="error"
+            variant="tonal"
+            size="small"
+            class="ml-1"
+            @click="showCancelDialog = true"
+          >
+            <v-icon>mdi-cancel</v-icon>
+            <v-tooltip activator="parent" location="bottom">Cancel Bet</v-tooltip>
+          </v-btn>
+        </template>
       </div>
 
-      <!-- Resolved banner -->
-      <v-alert
-        v-if="bet.status === 'resolved' && bet.resolvedOutcome !== null"
-        type="success"
-        variant="tonal"
-        class="mb-4"
-      >
-        <strong>Resolved:</strong> "{{ bet.outcomes[bet.resolvedOutcome] }}" won!
-        <table
-          v-if="position && position.totalCost > 0"
-          class="text-body-2 mt-2"
-          style="border-collapse: collapse"
-        >
-          <tbody>
-            <tr>
-              <td class="pr-4 text-medium-emphasis">Cost</td>
-              <td class="text-right">${{ position.totalCost.toFixed(2) }}</td>
-            </tr>
-            <tr>
-              <td class="pr-4 text-medium-emphasis">Payout</td>
-              <td class="text-right">
-                ${{ (position.shares[bet.resolvedOutcome] ?? 0).toFixed(2) }}
-              </td>
-            </tr>
-            <tr>
-              <td class="pr-4 text-medium-emphasis font-weight-bold">Profit</td>
-              <td
-                class="text-right font-weight-bold"
-                :class="
-                  (position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost >= 0
-                    ? 'text-success'
-                    : 'text-error'
-                "
-              >
-                {{
-                  (position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost >= 0 ? '+' : ''
-                }}${{
-                  ((position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost).toFixed(2)
-                }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </v-alert>
+      <template v-if="!bet">
+        <v-progress-linear indeterminate />
+      </template>
 
-      <!-- Cancelled banner -->
-      <v-alert v-if="bet.status === 'cancelled'" type="warning" variant="tonal" class="mb-4">
-        This bet was cancelled. All positions have been refunded at cost basis.
-      </v-alert>
-
-      <!-- Chart / Trades tabs -->
-      <v-tabs v-model="detailTab" density="compact" class="mb-2">
-        <v-tab value="chart">
-          <v-icon>mdi-chart-line</v-icon>
-        </v-tab>
-        <v-tab value="holdings">
-          <v-icon>mdi-swap-horizontal</v-icon>
-        </v-tab>
-        <v-tab value="trades">
-          <v-icon>mdi-history</v-icon>
-        </v-tab>
-      </v-tabs>
-
-      <v-window v-model="detailTab" class="mb-4" :touch="false">
-        <v-window-item value="chart">
-          <div class="mt-2 mb-4" style="min-height: 180px">
-            <SvgLineChart
-              :series="chartSeries"
-              :labels="chartLabels"
-              :y-min="0"
-              :y-max="100"
-              :y-format="(v: number) => `${v.toFixed(0)}%`"
-            />
+      <template v-else>
+        <!-- Question + status row -->
+        <div class="d-flex align-center ga-4 mb-2" style="margin-top: -4px">
+          <div class="flex-grow-1">
+            <p class="text-h6 font-weight-medium">{{ bet.question }}</p>
+            <v-chip v-if="isExcluded" color="error" size="small" variant="tonal" class="mt-1">
+              You are excluded
+            </v-chip>
+            <v-chip
+              v-else-if="excludedMemberNames.length > 0"
+              color="warning"
+              size="small"
+              variant="tonal"
+              class="mt-1"
+            >
+              Excluded: {{ excludedMemberNames.join(', ') }}
+            </v-chip>
           </div>
-        </v-window-item>
+          <div class="d-flex flex-column align-end justify-center ga-1 flex-shrink-0">
+            <v-chip
+              :color="
+                effectiveStatus === 'open'
+                  ? 'success'
+                  : effectiveStatus === 'resolved'
+                    ? 'info'
+                    : effectiveStatus === 'cancelled'
+                      ? 'error'
+                      : 'warning'
+              "
+              size="small"
+              variant="tonal"
+            >
+              {{ effectiveStatus }}
+            </v-chip>
+            <span v-if="timeRemaining" class="text-caption text-medium-emphasis">{{
+              timeRemaining
+            }}</span>
+          </div>
+        </div>
 
-        <v-window-item value="trades">
+        <!-- Resolved banner -->
+        <v-alert
+          v-if="bet.status === 'resolved' && bet.resolvedOutcome !== null"
+          type="success"
+          variant="tonal"
+          class="mb-4"
+        >
+          <strong>Resolved:</strong> "{{ bet.outcomes[bet.resolvedOutcome] }}" won!
           <table
-            v-if="betsStore.trades.length > 0"
-            class="text-body-2"
-            style="width: 100%; border-collapse: collapse; table-layout: fixed"
+            v-if="position && position.totalCost > 0"
+            class="text-body-2 mt-2"
+            style="border-collapse: collapse"
           >
-            <thead>
-              <tr
-                class="text-caption text-medium-emphasis"
-                style="
-                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
-                "
-              >
-                <th class="text-left py-1" style="width: 25%">Player</th>
-                <th class="text-left py-1">Action</th>
-                <th class="text-right py-1" style="width: 18%">Shares</th>
-                <th class="text-right py-1" style="width: 20%">Amount</th>
-              </tr>
-            </thead>
             <tbody>
-              <tr
-                v-for="trade in betsStore.trades"
-                :key="trade.id"
-                style="
-                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
-                "
-              >
-                <td class="py-1 truncate-cell">
-                  <v-menu
-                    open-on-hover
-                    open-on-click
-                    location="top"
-                    :close-on-content-click="false"
-                  >
-                    <template #activator="{ props }">
-                      <span v-bind="props" class="d-block text-truncate truncate-clickable">{{
-                        memberName(trade.userId)
-                      }}</span>
-                    </template>
-                    <v-card class="pa-2 text-caption">{{ memberName(trade.userId) }}</v-card>
-                  </v-menu>
+              <tr>
+                <td class="pr-4 text-medium-emphasis">Cost</td>
+                <td class="text-right">${{ position.totalCost.toFixed(2) }}</td>
+              </tr>
+              <tr>
+                <td class="pr-4 text-medium-emphasis">Payout</td>
+                <td class="text-right">
+                  ${{ (position.shares[bet.resolvedOutcome] ?? 0).toFixed(2) }}
                 </td>
-                <td class="py-1 truncate-cell">
-                  <v-menu
-                    open-on-hover
-                    open-on-click
-                    location="top"
-                    :close-on-content-click="false"
-                  >
-                    <template #activator="{ props }">
-                      <span v-bind="props" class="d-block text-truncate truncate-clickable">
+              </tr>
+              <tr>
+                <td class="pr-4 text-medium-emphasis font-weight-bold">Profit</td>
+                <td
+                  class="text-right font-weight-bold"
+                  :class="
+                    (position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost >= 0
+                      ? 'text-success'
+                      : 'text-error'
+                  "
+                >
+                  {{
+                    (position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost >= 0
+                      ? '+'
+                      : ''
+                  }}${{
+                    ((position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost).toFixed(2)
+                  }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </v-alert>
+
+        <!-- Cancelled banner -->
+        <v-alert v-if="bet.status === 'cancelled'" type="warning" variant="tonal" class="mb-4">
+          This bet was cancelled. All positions have been refunded at cost basis.
+        </v-alert>
+
+        <!-- Chart / Trades tabs -->
+        <v-tabs v-model="detailTab" density="compact" class="mb-2">
+          <v-tab value="chart">
+            <v-icon>mdi-chart-line</v-icon>
+          </v-tab>
+          <v-tab value="holdings">
+            <v-icon>mdi-swap-horizontal</v-icon>
+          </v-tab>
+          <v-tab value="trades">
+            <v-icon>mdi-history</v-icon>
+          </v-tab>
+        </v-tabs>
+
+        <v-window v-model="detailTab" class="mb-4" :touch="false">
+          <v-window-item value="chart">
+            <div class="mt-2 mb-4" style="min-height: 180px">
+              <SvgLineChart
+                :series="chartSeries"
+                :labels="chartLabels"
+                :y-min="0"
+                :y-max="100"
+                :y-format="(v: number) => `${v.toFixed(0)}%`"
+              />
+            </div>
+          </v-window-item>
+
+          <v-window-item value="trades">
+            <table
+              v-if="betsStore.trades.length > 0"
+              class="text-body-2"
+              style="width: 100%; border-collapse: collapse; table-layout: fixed"
+            >
+              <thead>
+                <tr
+                  class="text-caption text-medium-emphasis"
+                  style="
+                    border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                  "
+                >
+                  <th class="text-left py-1" style="width: 25%">Player</th>
+                  <th class="text-left py-1">Action</th>
+                  <th class="text-right py-1" style="width: 18%">Shares</th>
+                  <th class="text-right py-1" style="width: 20%">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="trade in betsStore.trades"
+                  :key="trade.id"
+                  style="
+                    border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                  "
+                >
+                  <td class="py-1 truncate-cell">
+                    <v-menu
+                      open-on-hover
+                      open-on-click
+                      location="top"
+                      :close-on-content-click="false"
+                    >
+                      <template #activator="{ props }">
+                        <span v-bind="props" class="d-block text-truncate truncate-clickable">{{
+                          memberName(trade.userId)
+                        }}</span>
+                      </template>
+                      <v-card class="pa-2 text-caption">{{ memberName(trade.userId) }}</v-card>
+                    </v-menu>
+                  </td>
+                  <td class="py-1 truncate-cell">
+                    <v-menu
+                      open-on-hover
+                      open-on-click
+                      location="top"
+                      :close-on-content-click="false"
+                    >
+                      <template #activator="{ props }">
+                        <span v-bind="props" class="d-block text-truncate truncate-clickable">
+                          <span :class="trade.shares > 0 ? 'text-success' : 'text-error'">
+                            {{ trade.shares > 0 ? 'Buy' : 'Sell' }}
+                          </span>
+                          "{{ bet.outcomes[trade.outcomeIndex] }}"
+                        </span>
+                      </template>
+                      <v-card class="pa-2 text-caption">
                         <span :class="trade.shares > 0 ? 'text-success' : 'text-error'">
                           {{ trade.shares > 0 ? 'Buy' : 'Sell' }}
                         </span>
                         "{{ bet.outcomes[trade.outcomeIndex] }}"
-                      </span>
-                    </template>
-                    <v-card class="pa-2 text-caption">
-                      <span :class="trade.shares > 0 ? 'text-success' : 'text-error'">
-                        {{ trade.shares > 0 ? 'Buy' : 'Sell' }}
-                      </span>
-                      "{{ bet.outcomes[trade.outcomeIndex] }}"
-                    </v-card>
-                  </v-menu>
-                </td>
-                <td class="text-right py-1">{{ Math.abs(trade.shares).toFixed(1) }}</td>
-                <td class="text-right py-1">${{ Math.abs(trade.cost).toFixed(2) }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-else class="text-body-2 text-medium-emphasis">No trades yet</p>
-        </v-window-item>
+                      </v-card>
+                    </v-menu>
+                  </td>
+                  <td class="text-right py-1">{{ Math.abs(trade.shares).toFixed(1) }}</td>
+                  <td class="text-right py-1">${{ Math.abs(trade.cost).toFixed(2) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="text-body-2 text-medium-emphasis">No trades yet</p>
+          </v-window-item>
 
-        <v-window-item value="holdings">
-          <table
-            v-if="betPositions.length > 0"
-            class="text-body-2"
-            style="width: 100%; border-collapse: collapse"
-          >
-            <thead>
-              <tr
-                class="text-caption text-medium-emphasis"
-                style="
-                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
-                "
-              >
-                <th class="text-left py-1">Player</th>
-                <th
-                  v-for="(outcome, i) in bet.outcomes"
-                  :key="i"
-                  class="text-center py-1 holdings-th"
+          <v-window-item value="holdings">
+            <table
+              v-if="betPositions.length > 0"
+              class="text-body-2"
+              style="width: 100%; border-collapse: collapse"
+            >
+              <thead>
+                <tr
+                  class="text-caption text-medium-emphasis"
+                  style="
+                    border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                  "
                 >
-                  <v-menu
-                    open-on-hover
-                    open-on-click
-                    location="top"
-                    :close-on-content-click="false"
+                  <th class="text-left py-1">Player</th>
+                  <th
+                    v-for="(outcome, i) in bet.outcomes"
+                    :key="i"
+                    class="text-center py-1 holdings-th"
                   >
-                    <template #activator="{ props }">
-                      <span
-                        v-bind="props"
-                        class="d-inline-flex align-center ga-1 holdings-th-content"
-                      >
+                    <v-menu
+                      open-on-hover
+                      open-on-click
+                      location="top"
+                      :close-on-content-click="false"
+                    >
+                      <template #activator="{ props }">
                         <span
-                          :style="{
-                            width: '8px',
-                            height: '8px',
-                            borderRadius: '2px',
-                            backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
-                            flexShrink: 0,
-                          }"
-                        />
-                        <span class="text-truncate">{{ outcome }}</span>
-                      </span>
-                    </template>
-                    <v-card class="pa-2 text-caption">{{ outcome }}</v-card>
-                  </v-menu>
-                </th>
-                <th class="text-right py-1">Spent</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="pos in betPositions"
-                :key="pos.userId"
-                style="
-                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
-                "
-              >
-                <td class="py-1">{{ memberName(pos.userId) }}</td>
-                <td v-for="(outcome, i) in bet.outcomes" :key="i" class="text-center py-1">
-                  {{ (pos.shares[i] ?? 0).toFixed(1) }}
-                </td>
-                <td class="text-right py-1">${{ pos.totalCost.toFixed(2) }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-else class="text-body-2 text-medium-emphasis">No positions yet</p>
-        </v-window-item>
-      </v-window>
-      <!-- Outcome prices -->
-      <div class="mb-4">
-        <div
-          class="outcome-spectrum"
-          :style="{
-            height: '28px',
-            borderRadius: '6px',
-            overflow: 'hidden',
-            display: 'flex',
-            position: 'relative',
-          }"
-        >
+                          v-bind="props"
+                          class="d-inline-flex align-center ga-1 holdings-th-content"
+                        >
+                          <span
+                            :style="{
+                              width: '8px',
+                              height: '8px',
+                              borderRadius: '2px',
+                              backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+                              flexShrink: 0,
+                            }"
+                          />
+                          <span class="text-truncate">{{ outcome }}</span>
+                        </span>
+                      </template>
+                      <v-card class="pa-2 text-caption">{{ outcome }}</v-card>
+                    </v-menu>
+                  </th>
+                  <th class="text-right py-1">Spent</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="pos in betPositions"
+                  :key="pos.userId"
+                  style="
+                    border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                  "
+                >
+                  <td class="py-1">{{ memberName(pos.userId) }}</td>
+                  <td v-for="(outcome, i) in bet.outcomes" :key="i" class="text-center py-1">
+                    {{ (pos.shares[i] ?? 0).toFixed(1) }}
+                  </td>
+                  <td class="text-right py-1">${{ pos.totalCost.toFixed(2) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="text-body-2 text-medium-emphasis">No positions yet</p>
+          </v-window-item>
+        </v-window>
+        <!-- Outcome prices -->
+        <div class="mb-4">
           <div
-            v-for="(outcome, i) in bet.outcomes"
-            :key="i"
+            class="outcome-spectrum"
             :style="{
-              width: (prices[i] ?? 0) * 100 + '%',
-              backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+              height: '28px',
+              borderRadius: '6px',
+              overflow: 'hidden',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
               position: 'relative',
             }"
           >
-            <span
-              v-if="(prices[i] ?? 0) >= 0.08"
-              class="text-caption font-weight-bold"
-              style="color: white; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4)"
-            >
-              {{ ((prices[i] ?? 0) * 100).toFixed(1) }}%
-            </span>
-          </div>
-        </div>
-        <div class="d-flex flex-wrap ga-3 mt-2">
-          <div v-for="(outcome, i) in bet.outcomes" :key="i" class="d-flex align-center ga-1">
             <div
+              v-for="(outcome, i) in bet.outcomes"
+              :key="i"
               :style="{
-                width: '12px',
-                height: '12px',
-                borderRadius: '3px',
+                width: (prices[i] ?? 0) * 100 + '%',
                 backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative',
               }"
-            />
-            <span class="text-caption">{{ outcome }}</span>
+            >
+              <span
+                v-if="(prices[i] ?? 0) >= 0.08"
+                class="text-caption font-weight-bold"
+                style="color: white; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4)"
+              >
+                {{ ((prices[i] ?? 0) * 100).toFixed(1) }}%
+              </span>
+            </div>
           </div>
-        </div>
-      </div>
-
-      <!-- Your Positions -->
-      <v-card v-if="canTrade || position" class="mb-4" variant="outlined">
-        <v-card-title class="text-subtitle-1">Your Positions</v-card-title>
-        <v-card-text>
-          <div v-for="(outcome, i) in bet.outcomes" :key="i" class="mb-4">
-            <div class="d-flex align-center ga-2 mb-1" style="min-width: 0">
+          <div class="d-flex flex-wrap ga-3 mt-2">
+            <div v-for="(outcome, i) in bet.outcomes" :key="i" class="d-flex align-center ga-1">
               <div
                 :style="{
-                  width: '10px',
-                  height: '10px',
-                  borderRadius: '2px',
+                  width: '12px',
+                  height: '12px',
+                  borderRadius: '3px',
                   backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
                 }"
               />
-              <v-menu open-on-hover open-on-click location="top" :close-on-content-click="false">
-                <template #activator="{ props }">
-                  <span
-                    v-bind="props"
-                    class="text-body-2 font-weight-medium text-truncate d-block truncate-clickable"
-                    style="min-width: 0"
-                    >{{ outcome }}</span
+              <span class="text-caption">{{ outcome }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Your Positions -->
+        <v-card v-if="canTrade || position" class="mb-4" variant="outlined">
+          <v-card-title class="text-subtitle-1">Your Positions</v-card-title>
+          <v-card-text>
+            <div v-for="(outcome, i) in bet.outcomes" :key="i" class="mb-4">
+              <div class="d-flex align-center ga-2 mb-1" style="min-width: 0">
+                <div
+                  :style="{
+                    width: '10px',
+                    height: '10px',
+                    borderRadius: '2px',
+                    backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+                  }"
+                />
+                <v-menu open-on-hover open-on-click location="top" :close-on-content-click="false">
+                  <template #activator="{ props }">
+                    <span
+                      v-bind="props"
+                      class="text-body-2 font-weight-medium text-truncate d-block truncate-clickable"
+                      style="min-width: 0"
+                      >{{ outcome }}</span
+                    >
+                  </template>
+                  <v-card class="pa-2 text-caption">{{ outcome }}</v-card>
+                </v-menu>
+                <div class="ml-auto d-flex flex-column align-end" style="line-height: 1.2">
+                  <div class="d-flex align-baseline ga-2">
+                    <span class="text-caption text-medium-emphasis">
+                      {{ (1 / (prices[i] ?? 1)).toFixed(2) }}x
+                    </span>
+                    <span class="font-weight-bold" style="font-size: 15px">
+                      {{ ((prices[i] ?? 0) * 100).toFixed(0) }}%
+                    </span>
+                  </div>
+                  <div
+                    class="d-flex align-baseline ga-2"
+                    :style="{ visibility: hasPendingTrades ? 'visible' : 'hidden' }"
                   >
-                </template>
-                <v-card class="pa-2 text-caption">{{ outcome }}</v-card>
-              </v-menu>
-              <div class="ml-auto d-flex flex-column align-end" style="line-height: 1.2">
-                <div class="d-flex align-baseline ga-2">
-                  <span class="text-caption text-medium-emphasis">
-                    {{ (1 / (prices[i] ?? 1)).toFixed(2) }}x
+                    <span
+                      class="text-caption font-weight-bold"
+                      :style="{
+                        color:
+                          1 / (projectedPrices[i] ?? 1) >= 1 / (prices[i] ?? 1)
+                            ? '#4caf50'
+                            : '#ef5350',
+                      }"
+                    >
+                      {{ (1 / (projectedPrices[i] ?? 1)).toFixed(2) }}x
+                    </span>
+                    <span
+                      class="text-caption font-weight-bold"
+                      :style="{
+                        color:
+                          (projectedPrices[i] ?? 0) >= (prices[i] ?? 0) ? '#4caf50' : '#ef5350',
+                      }"
+                    >
+                      {{ ((projectedPrices[i] ?? 0) * 100).toFixed(0) }}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="canTrade" class="thumb-only-slider">
+                <v-slider
+                  :model-value="desiredShares[i] ?? 0"
+                  @update:model-value="(val: number) => onSliderUpdate(i, val)"
+                  :min="0"
+                  :max="100"
+                  :step="1"
+                  density="compact"
+                  hide-details
+                />
+              </div>
+
+              <p
+                v-if="limitWarnings[i]"
+                class="text-caption text-center"
+                style="color: #ef5350; margin-top: -4px"
+              >
+                You can't wager more than 100 shares per bet
+              </p>
+
+              <div class="text-caption text-medium-emphasis" style="margin-top: 2px">
+                {{ (position?.shares[i] ?? 0).toFixed(0) }} shares held
+                <span v-if="(tradeDiffs[i] ?? 0) !== 0" class="ml-1">
+                  &rarr;
+                  <span
+                    :style="{
+                      color: (tradeDiffs[i] ?? 0) > 0 ? '#4caf50' : '#ef5350',
+                      marginLeft: '3px',
+                    }"
+                  >
+                    ({{ (tradeDiffs[i] ?? 0) > 0 ? '+' : '' }}{{ tradeDiffs[i] ?? 0 }})
                   </span>
-                  <span class="font-weight-bold" style="font-size: 15px">
-                    {{ ((prices[i] ?? 0) * 100).toFixed(0) }}%
+
+                  <span
+                    :style="{
+                      color: (tradeCosts[i] ?? 0) <= 0 ? '#4caf50' : '#ef5350',
+                      marginLeft: '3px',
+                    }"
+                  >
+                    ({{ (tradeCosts[i] ?? 0) <= 0 ? '+' : '-' }}${{
+                      Math.abs(tradeCosts[i] ?? 0).toFixed(2)
+                    }})
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Total Holdings -->
+            <v-divider class="mb-3" />
+
+            <div class="mb-3">
+              <!-- Net cost -->
+              <div class="d-flex align-start justify-space-between text-body-2 mb-1">
+                <span class="font-weight-medium">Net cost</span>
+                <div class="d-flex flex-column align-end" style="line-height: 1.3">
+                  <span class="font-weight-bold">${{ holdingsNetCost.toFixed(2) }}</span>
+                  <span
+                    class="text-caption font-weight-bold"
+                    :style="{
+                      color: projectedNetCost <= holdingsNetCost ? '#4caf50' : '#ef5350',
+                      visibility: hasPendingTrades ? 'visible' : 'hidden',
+                    }"
+                  >
+                    ${{ projectedNetCost.toFixed(2) }}
                   </span>
                 </div>
-                <div
-                  class="d-flex align-baseline ga-2"
-                  :style="{ visibility: hasPendingTrades ? 'visible' : 'hidden' }"
+              </div>
+
+              <!-- Profit potential -->
+              <div class="d-flex align-start justify-space-between text-body-2">
+                <span class="font-weight-medium"
+                  >Profit potential<span
+                    v-if="holdingsProfitPotential.outcome"
+                    class="text-medium-emphasis font-weight-regular"
+                  >
+                    ({{ holdingsProfitPotential.outcome }})</span
+                  ></span
                 >
+                <div class="d-flex flex-column align-end" style="line-height: 1.3">
+                  <span
+                    class="font-weight-bold"
+                    :style="{
+                      color: holdingsProfitPotential.value >= 0 ? '#4caf50' : '#ef5350',
+                    }"
+                  >
+                    {{ holdingsProfitPotential.value >= 0 ? '+' : '' }}${{
+                      holdingsProfitPotential.value.toFixed(2)
+                    }}
+                  </span>
                   <span
                     class="text-caption font-weight-bold"
                     :style="{
                       color:
-                        1 / (projectedPrices[i] ?? 1) >= 1 / (prices[i] ?? 1)
+                        projectedHoldingsProfitPotential.value >= holdingsProfitPotential.value
                           ? '#4caf50'
                           : '#ef5350',
+                      visibility: hasPendingTrades ? 'visible' : 'hidden',
                     }"
                   >
-                    {{ (1 / (projectedPrices[i] ?? 1)).toFixed(2) }}x
-                  </span>
-                  <span
-                    class="text-caption font-weight-bold"
-                    :style="{
-                      color: (projectedPrices[i] ?? 0) >= (prices[i] ?? 0) ? '#4caf50' : '#ef5350',
-                    }"
-                  >
-                    {{ ((projectedPrices[i] ?? 0) * 100).toFixed(0) }}%
+                    {{ projectedHoldingsProfitPotential.value >= 0 ? '+' : '' }}${{
+                      projectedHoldingsProfitPotential.value.toFixed(2)
+                    }}
+                    <span
+                      v-if="
+                        projectedHoldingsProfitPotential.outcome !== holdingsProfitPotential.outcome
+                      "
+                      class="text-medium-emphasis"
+                    >
+                      ({{ projectedHoldingsProfitPotential.outcome }})
+                    </span>
                   </span>
                 </div>
               </div>
             </div>
 
-            <div v-if="canTrade" class="thumb-only-slider">
-              <v-slider
-                :model-value="desiredShares[i] ?? 0"
-                @update:model-value="(val: number) => onSliderUpdate(i, val)"
-                :min="0"
-                :max="100"
-                :step="1"
-                density="compact"
-                hide-details
-              />
-            </div>
-
-            <p
-              v-if="limitWarnings[i]"
-              class="text-caption text-center"
-              style="color: #ef5350; margin-top: -4px"
-            >
-              You can't wager more than 100 shares per bet
-            </p>
-
-            <div class="text-caption text-medium-emphasis" style="margin-top: 2px">
-              {{ (position?.shares[i] ?? 0).toFixed(0) }} shares held
-              <span v-if="(tradeDiffs[i] ?? 0) !== 0" class="ml-1">
-                &rarr;
-                <span
-                  :style="{
-                    color: (tradeDiffs[i] ?? 0) > 0 ? '#4caf50' : '#ef5350',
-                    marginLeft: '3px',
-                  }"
-                >
-                  ({{ (tradeDiffs[i] ?? 0) > 0 ? '+' : '' }}{{ tradeDiffs[i] ?? 0 }})
-                </span>
-
-                <span
-                  :style="{
-                    color: (tradeCosts[i] ?? 0) <= 0 ? '#4caf50' : '#ef5350',
-                    marginLeft: '3px',
-                  }"
-                >
-                  ({{ (tradeCosts[i] ?? 0) <= 0 ? '+' : '-' }}${{
-                    Math.abs(tradeCosts[i] ?? 0).toFixed(2)
-                  }})
-                </span>
-              </span>
-            </div>
-          </div>
-
-          <!-- Total Holdings -->
-          <v-divider class="mb-3" />
-
-          <div class="mb-3">
-            <!-- Net cost -->
-            <div class="d-flex align-start justify-space-between text-body-2 mb-1">
-              <span class="font-weight-medium">Net cost</span>
-              <div class="d-flex flex-column align-end" style="line-height: 1.3">
-                <span class="font-weight-bold">${{ holdingsNetCost.toFixed(2) }}</span>
-                <span
-                  class="text-caption font-weight-bold"
-                  :style="{
-                    color: projectedNetCost <= holdingsNetCost ? '#4caf50' : '#ef5350',
-                    visibility: hasPendingTrades ? 'visible' : 'hidden',
-                  }"
-                >
-                  ${{ projectedNetCost.toFixed(2) }}
-                </span>
-              </div>
-            </div>
-
-            <!-- Profit potential -->
-            <div class="d-flex align-start justify-space-between text-body-2">
-              <span class="font-weight-medium"
-                >Profit potential<span
-                  v-if="holdingsProfitPotential.outcome"
-                  class="text-medium-emphasis font-weight-regular"
-                >
-                  ({{ holdingsProfitPotential.outcome }})</span
-                ></span
-              >
-              <div class="d-flex flex-column align-end" style="line-height: 1.3">
-                <span
-                  class="font-weight-bold"
-                  :style="{
-                    color: holdingsProfitPotential.value >= 0 ? '#4caf50' : '#ef5350',
-                  }"
-                >
-                  {{ holdingsProfitPotential.value >= 0 ? '+' : '' }}${{
-                    holdingsProfitPotential.value.toFixed(2)
-                  }}
-                </span>
-                <span
-                  class="text-caption font-weight-bold"
-                  :style="{
-                    color:
-                      projectedHoldingsProfitPotential.value >= holdingsProfitPotential.value
-                        ? '#4caf50'
-                        : '#ef5350',
-                    visibility: hasPendingTrades ? 'visible' : 'hidden',
-                  }"
-                >
-                  {{ projectedHoldingsProfitPotential.value >= 0 ? '+' : '' }}${{
-                    projectedHoldingsProfitPotential.value.toFixed(2)
-                  }}
-                  <span
-                    v-if="
-                      projectedHoldingsProfitPotential.outcome !== holdingsProfitPotential.outcome
-                    "
-                    class="text-medium-emphasis"
-                  >
-                    ({{ projectedHoldingsProfitPotential.outcome }})
-                  </span>
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div class="d-flex ga-2" :style="{ visibility: hasPendingTrades ? 'visible' : 'hidden' }">
-            <v-btn
-              color="primary"
-              :loading="submitting"
-              :disabled="submitting"
-              @click="handleTrades"
-              class="flex-grow-1"
-            >
-              {{ tradeActionLabel }}
-            </v-btn>
-            <v-btn variant="text" @click="resetSliders" :disabled="submitting"> Reset </v-btn>
-          </div>
-
-          <v-alert v-if="betsStore.error" type="error" variant="tonal" class="mt-3">
-            {{ betsStore.error }}
-          </v-alert>
-        </v-card-text>
-      </v-card>
-
-      <!-- Comments -->
-      <v-card class="mb-4" variant="outlined">
-        <v-card-title class="text-subtitle-1 d-flex align-center">
-          Comments
-          <v-chip
-            v-if="bet.commentCount"
-            size="x-small"
-            color="secondary"
-            variant="tonal"
-            class="ml-2"
-          >
-            {{ bet.commentCount ?? 0 }}
-          </v-chip>
-        </v-card-title>
-        <v-card-text>
-          <div
-            v-if="commentsStore.comments.length > 0"
-            class="comments-list mb-3"
-            style="max-height: 400px; overflow-y: auto"
-          >
             <div
-              v-for="comment in commentsStore.comments"
-              :key="comment.id"
-              class="d-flex ga-2 py-2"
-              style="border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity))"
+              class="d-flex ga-2"
+              :style="{ visibility: hasPendingTrades ? 'visible' : 'hidden' }"
             >
-              <div class="flex-grow-1" style="min-width: 0">
-                <div class="d-flex align-center ga-2">
-                  <span class="text-caption font-weight-bold">{{
-                    memberName(comment.userId)
-                  }}</span>
-                  <span class="text-caption text-medium-emphasis">
-                    {{ comment.createdAt ? commentTimeAgo(comment.createdAt) : '' }}
-                  </span>
-                </div>
-                <p class="text-body-2 mt-1" style="white-space: pre-wrap; word-break: break-word">
-                  {{ comment.text }}
-                </p>
-              </div>
+              <v-btn
+                color="primary"
+                :loading="submitting"
+                :disabled="submitting"
+                @click="handleTrades"
+                class="flex-grow-1"
+              >
+                {{ tradeActionLabel }}
+              </v-btn>
+              <v-btn variant="text" @click="resetSliders" :disabled="submitting"> Reset </v-btn>
             </div>
-          </div>
-          <p v-else class="text-body-2 text-medium-emphasis mb-3">No comments yet</p>
 
-          <div class="d-flex align-center ga-2">
-            <v-text-field
-              v-model="newCommentText"
-              placeholder="Write a comment..."
-              variant="outlined"
-              density="compact"
-              hide-details
-              :maxlength="500"
-              @keydown.enter.prevent="handlePostComment"
-            />
-            <v-btn
-              ref="sendBtnRef"
-              icon="mdi-send"
-              color="primary"
-              variant="tonal"
-              size="small"
-              :loading="commentsStore.submitting"
-              :disabled="!newCommentText.trim() || commentsStore.submitting"
-              @click="handlePostComment"
-            />
-          </div>
-          <v-alert
-            v-if="commentsStore.error"
-            type="error"
-            variant="tonal"
-            class="mt-2"
-            density="compact"
-          >
-            {{ commentsStore.error }}
-          </v-alert>
-        </v-card-text>
-      </v-card>
-
-      <!-- Resolve dialog -->
-      <v-dialog v-model="showResolveDialog" max-width="400">
-        <v-card>
-          <v-card-title>Resolve Bet</v-card-title>
-          <v-card-text>
-            <p class="text-body-2 mb-3">Select the winning outcome:</p>
-            <v-radio-group v-model="resolveOutcome">
-              <v-radio v-for="(outcome, i) in bet.outcomes" :key="i" :label="outcome" :value="i" />
-            </v-radio-group>
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="showResolveDialog = false">Cancel</v-btn>
-            <v-btn color="primary" :loading="resolving" @click="handleResolve">
-              Confirm Resolution
-            </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
-
-      <!-- Edit dialog -->
-      <v-dialog v-model="showEditDialog" max-width="500" persistent>
-        <v-card>
-          <v-card-title>Edit Bet</v-card-title>
-          <v-card-text>
-            <v-textarea
-              v-model="editQuestion"
-              label="Question"
-              variant="outlined"
-              rows="2"
-              :disabled="hasTrades || editSubmitting"
-              hide-details
-            />
-            <p v-if="editErrors.question" class="edit-field-error">{{ editErrors.question }}</p>
-            <p v-else-if="hasTrades" class="edit-field-hint">
-              Cannot change after trading has started
-            </p>
-            <div style="height: 8px" />
-
-            <template v-if="editType === 'multiple_choice'">
-              <fieldset class="outcomes-fieldset mb-1">
-                <legend class="outcomes-legend">Outcomes</legend>
-                <div v-for="(_, i) in editOutcomes" :key="i" class="d-flex align-center mb-2">
-                  <div class="d-flex flex-column mr-1">
-                    <v-btn
-                      icon="mdi-chevron-up"
-                      size="x-small"
-                      variant="text"
-                      density="compact"
-                      :disabled="i === 0 || hasTrades || editSubmitting"
-                      @click="moveEditOutcome(i, -1)"
-                    />
-                    <v-btn
-                      icon="mdi-chevron-down"
-                      size="x-small"
-                      variant="text"
-                      density="compact"
-                      :disabled="i === editOutcomes.length - 1 || hasTrades || editSubmitting"
-                      @click="moveEditOutcome(i, 1)"
-                    />
-                  </div>
-                  <v-text-field
-                    v-model="editOutcomes[i]"
-                    :placeholder="`Option ${i + 1}`"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    class="flex-grow-1"
-                    :disabled="hasTrades || editSubmitting"
-                  />
-                  <v-btn
-                    icon="mdi-close"
-                    size="small"
-                    variant="text"
-                    color="error"
-                    class="ml-1"
-                    :disabled="hasTrades || editSubmitting"
-                    @click="removeEditOutcome(i)"
-                  />
-                </div>
-                <p v-if="editErrors.outcomes" class="edit-field-error" style="margin-top: 4px">
-                  {{ editErrors.outcomes }}
-                </p>
-                <p v-else-if="hasTrades" class="edit-field-hint" style="margin-top: 4px">
-                  Cannot change after trading has started
-                </p>
-                <v-btn
-                  prepend-icon="mdi-plus"
-                  variant="tonal"
-                  size="small"
-                  :disabled="editOutcomes.length >= 10 || hasTrades || editSubmitting"
-                  class="mt-1"
-                  @click="addEditOutcome"
-                >
-                  Add option
-                </v-btn>
-              </fieldset>
-            </template>
-
-            <v-text-field
-              v-model="editClosesAt"
-              label="Closes at"
-              type="datetime-local"
-              variant="outlined"
-              :disabled="editSubmitting"
-              hide-details
-            />
-            <p v-if="editErrors.closesAt" class="edit-field-error">{{ editErrors.closesAt }}</p>
-            <p v-else class="edit-field-hint">Can only be extended, not shortened</p>
-            <div style="height: 8px" />
-
-            <v-select
-              v-model="editExcludedMembers"
-              :items="marketStore.members"
-              item-title="displayName"
-              item-value="userId"
-              label="Exclude members"
-              variant="outlined"
-              multiple
-              chips
-              closable-chips
-              hide-details
-              :disabled="editSubmitting"
-            />
-            <p v-if="editErrors.excludedMembers" class="edit-field-error" style="margin-top: 2px">
-              {{ editErrors.excludedMembers }}
-            </p>
-            <p v-else class="edit-field-hint" style="margin-top: 2px">
-              Can only add new exclusions
-            </p>
-
-            <v-alert
-              v-if="editErrors.general"
-              type="error"
-              variant="tonal"
-              class="mt-3"
-              density="compact"
-            >
-              {{ editErrors.general }}
+            <v-alert v-if="betsStore.error" type="error" variant="tonal" class="mt-3">
+              {{ betsStore.error }}
             </v-alert>
           </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="showEditDialog = false" :disabled="editSubmitting"
-              >Cancel</v-btn
+        </v-card>
+
+        <!-- Comments -->
+        <v-card class="mb-4" variant="outlined">
+          <v-card-title class="text-subtitle-1 d-flex align-center">
+            Comments
+            <v-chip
+              v-if="bet.commentCount"
+              size="x-small"
+              color="secondary"
+              variant="tonal"
+              class="ml-2"
             >
-            <v-btn color="primary" :loading="editSubmitting" @click="handleEditSubmit">
-              Save Changes
-            </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
-
-      <!-- Cancel dialog -->
-      <v-dialog v-model="showCancelDialog" max-width="400">
-        <v-card>
-          <v-card-title>Cancel Bet</v-card-title>
+              {{ bet.commentCount ?? 0 }}
+            </v-chip>
+          </v-card-title>
           <v-card-text>
-            <p class="text-body-2">
-              Are you sure? All positions will be refunded at cost basis. This cannot be undone.
-            </p>
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="showCancelDialog = false">Go Back</v-btn>
-            <v-btn color="error" :loading="resolving" @click="handleCancel"> Cancel Bet </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+            <div
+              v-if="commentsStore.comments.length > 0"
+              class="comments-list mb-3"
+              style="max-height: 400px; overflow-y: auto"
+            >
+              <div
+                v-for="comment in commentsStore.comments"
+                :key="comment.id"
+                class="d-flex ga-2 py-2"
+                style="
+                  border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                "
+              >
+                <div class="flex-grow-1" style="min-width: 0">
+                  <div class="d-flex align-center ga-2">
+                    <span class="text-caption font-weight-bold">{{
+                      memberName(comment.userId)
+                    }}</span>
+                    <span class="text-caption text-medium-emphasis">
+                      {{ comment.createdAt ? commentTimeAgo(comment.createdAt) : '' }}
+                    </span>
+                  </div>
+                  <p class="text-body-2 mt-1" style="white-space: pre-wrap; word-break: break-word">
+                    {{ comment.text }}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <p v-else class="text-body-2 text-medium-emphasis mb-3">No comments yet</p>
 
-      <!-- Recent trades removed - now in tabs above -->
-    </template>
-  </v-container>
+            <div class="d-flex align-center ga-2">
+              <v-text-field
+                v-model="newCommentText"
+                placeholder="Write a comment..."
+                variant="outlined"
+                density="compact"
+                hide-details
+                :maxlength="500"
+                @keydown.enter.prevent="handlePostComment"
+              />
+              <v-btn
+                ref="sendBtnRef"
+                icon="mdi-send"
+                color="primary"
+                variant="tonal"
+                size="small"
+                :loading="commentsStore.submitting"
+                :disabled="!newCommentText.trim() || commentsStore.submitting"
+                @click="handlePostComment"
+              />
+            </div>
+            <v-alert
+              v-if="commentsStore.error"
+              type="error"
+              variant="tonal"
+              class="mt-2"
+              density="compact"
+            >
+              {{ commentsStore.error }}
+            </v-alert>
+          </v-card-text>
+        </v-card>
+
+        <!-- Resolve dialog -->
+        <v-dialog v-model="showResolveDialog" max-width="400">
+          <v-card>
+            <v-card-title>Resolve Bet</v-card-title>
+            <v-card-text>
+              <p class="text-body-2 mb-3">Select the winning outcome:</p>
+              <v-radio-group v-model="resolveOutcome">
+                <v-radio
+                  v-for="(outcome, i) in bet.outcomes"
+                  :key="i"
+                  :label="outcome"
+                  :value="i"
+                />
+              </v-radio-group>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn variant="text" @click="showResolveDialog = false">Cancel</v-btn>
+              <v-btn color="primary" :loading="resolving" @click="handleResolve">
+                Confirm Resolution
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Edit dialog -->
+        <v-dialog v-model="showEditDialog" max-width="500" persistent>
+          <v-card>
+            <v-card-title>Edit Bet</v-card-title>
+            <v-card-text>
+              <v-textarea
+                v-model="editQuestion"
+                label="Question"
+                variant="outlined"
+                rows="2"
+                :disabled="hasTrades || editSubmitting"
+                hide-details
+              />
+              <p v-if="editErrors.question" class="edit-field-error">{{ editErrors.question }}</p>
+              <p v-else-if="hasTrades" class="edit-field-hint">
+                Cannot change after trading has started
+              </p>
+              <div style="height: 8px" />
+
+              <template v-if="editType === 'multiple_choice'">
+                <fieldset class="outcomes-fieldset mb-1">
+                  <legend class="outcomes-legend">Outcomes</legend>
+                  <div v-for="(_, i) in editOutcomes" :key="i" class="d-flex align-center mb-2">
+                    <div class="d-flex flex-column mr-1">
+                      <v-btn
+                        icon="mdi-chevron-up"
+                        size="x-small"
+                        variant="text"
+                        density="compact"
+                        :disabled="i === 0 || hasTrades || editSubmitting"
+                        @click="moveEditOutcome(i, -1)"
+                      />
+                      <v-btn
+                        icon="mdi-chevron-down"
+                        size="x-small"
+                        variant="text"
+                        density="compact"
+                        :disabled="i === editOutcomes.length - 1 || hasTrades || editSubmitting"
+                        @click="moveEditOutcome(i, 1)"
+                      />
+                    </div>
+                    <v-text-field
+                      v-model="editOutcomes[i]"
+                      :placeholder="`Option ${i + 1}`"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                      class="flex-grow-1"
+                      :disabled="hasTrades || editSubmitting"
+                    />
+                    <v-btn
+                      icon="mdi-close"
+                      size="small"
+                      variant="text"
+                      color="error"
+                      class="ml-1"
+                      :disabled="hasTrades || editSubmitting"
+                      @click="removeEditOutcome(i)"
+                    />
+                  </div>
+                  <p v-if="editErrors.outcomes" class="edit-field-error" style="margin-top: 4px">
+                    {{ editErrors.outcomes }}
+                  </p>
+                  <p v-else-if="hasTrades" class="edit-field-hint" style="margin-top: 4px">
+                    Cannot change after trading has started
+                  </p>
+                  <v-btn
+                    prepend-icon="mdi-plus"
+                    variant="tonal"
+                    size="small"
+                    :disabled="editOutcomes.length >= 10 || hasTrades || editSubmitting"
+                    class="mt-1"
+                    @click="addEditOutcome"
+                  >
+                    Add option
+                  </v-btn>
+                </fieldset>
+              </template>
+
+              <v-text-field
+                v-model="editClosesAt"
+                label="Closes at"
+                type="datetime-local"
+                variant="outlined"
+                :disabled="editSubmitting"
+                hide-details
+              />
+              <p v-if="editErrors.closesAt" class="edit-field-error">{{ editErrors.closesAt }}</p>
+              <p v-else class="edit-field-hint">Can only be extended, not shortened</p>
+              <div style="height: 8px" />
+
+              <v-select
+                v-model="editExcludedMembers"
+                :items="marketStore.members"
+                item-title="displayName"
+                item-value="userId"
+                label="Exclude members"
+                variant="outlined"
+                multiple
+                chips
+                closable-chips
+                hide-details
+                :disabled="editSubmitting"
+              />
+              <p v-if="editErrors.excludedMembers" class="edit-field-error" style="margin-top: 2px">
+                {{ editErrors.excludedMembers }}
+              </p>
+              <p v-else class="edit-field-hint" style="margin-top: 2px">
+                Can only add new exclusions
+              </p>
+
+              <v-alert
+                v-if="editErrors.general"
+                type="error"
+                variant="tonal"
+                class="mt-3"
+                density="compact"
+              >
+                {{ editErrors.general }}
+              </v-alert>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn variant="text" @click="showEditDialog = false" :disabled="editSubmitting"
+                >Cancel</v-btn
+              >
+              <v-btn color="primary" :loading="editSubmitting" @click="handleEditSubmit">
+                Save Changes
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Cancel dialog -->
+        <v-dialog v-model="showCancelDialog" max-width="400">
+          <v-card>
+            <v-card-title>Cancel Bet</v-card-title>
+            <v-card-text>
+              <p class="text-body-2">
+                Are you sure? All positions will be refunded at cost basis. This cannot be undone.
+              </p>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn variant="text" @click="showCancelDialog = false">Go Back</v-btn>
+              <v-btn color="error" :loading="resolving" @click="handleCancel"> Cancel Bet </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Recent trades removed - now in tabs above -->
+      </template>
+    </v-container>
+  </div>
 </template>
 
 <style scoped>
+.swipe-viewport {
+  overflow-x: hidden;
+}
+
 .slider-shake {
   animation: shake 0.3s ease;
 }

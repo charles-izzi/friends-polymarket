@@ -56,24 +56,37 @@ export function useSwipe(options: SwipeOptions) {
   function onTouchEnd(e: TouchEvent) {
     if (!tracking) return
     tracking = false
-    swipeDeltaX.value = 0
 
-    if (cancelled) return
+    if (cancelled) {
+      swipeDeltaX.value = 0
+      return
+    }
 
     const touch = e.changedTouches[0]
-    if (!touch) return
+    if (!touch) {
+      swipeDeltaX.value = 0
+      return
+    }
 
     const dx = touch.clientX - startX
     const dy = Math.abs(touch.clientY - startY)
 
-    if (dy > maxVertical) return
-    if (Math.abs(dx) < threshold) return
+    if (dy > maxVertical || Math.abs(dx) < threshold) {
+      // Below threshold — snap back
+      swipeDeltaX.value = 0
+      return
+    }
 
+    // Swipe detected — keep swipeDeltaX so caller can animate from current position
     if (dx < 0) {
       options.onSwipeLeft?.()
     } else {
       options.onSwipeRight?.()
     }
+  }
+
+  function resetSwipe() {
+    swipeDeltaX.value = 0
   }
 
   function getTarget() {
@@ -94,5 +107,5 @@ export function useSwipe(options: SwipeOptions) {
     el.removeEventListener('touchend', onTouchEnd as EventListener)
   })
 
-  return { swipeDeltaX }
+  return { swipeDeltaX, resetSwipe }
 }
