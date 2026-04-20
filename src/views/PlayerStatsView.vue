@@ -368,6 +368,29 @@ function fmtPct(v: number): string {
               </p>
             </v-card>
           </v-col>
+
+          <!-- Accuracy (Avg P/L per bet) -->
+          <v-col cols="6" sm="3">
+            <v-card variant="outlined" class="pa-3 text-center" style="height: 100%">
+              <div class="d-flex align-center justify-center">
+                <span class="text-caption text-medium-emphasis">Accuracy</span>
+                <v-btn icon size="x-small" variant="text" class="ml-1">
+                  <v-icon size="14">mdi-information-outline</v-icon>
+                  <v-tooltip activator="parent" location="top">
+                    Average profit or loss per resolved bet
+                  </v-tooltip>
+                </v-btn>
+              </div>
+              <p
+                class="text-h5 font-weight-bold mt-1"
+                :class="
+                  stats!.totalProfit / stats!.totalResolved >= 0 ? 'text-success' : 'text-error'
+                "
+              >
+                {{ fmtDollars(stats!.totalProfit / stats!.totalResolved) }}
+              </p>
+            </v-card>
+          </v-col>
         </v-row>
 
         <!-- Notable Bets -->
