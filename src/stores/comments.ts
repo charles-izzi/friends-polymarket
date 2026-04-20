@@ -32,7 +32,9 @@ export const useCommentsStore = defineStore('comments', () => {
   const comments = ref<Comment[]>([])
   const submitting = ref(false)
   const error = ref('')
-  const submitButtonRect = ref<{ top: number; right: number; bottom: number; left: number } | null>(null)
+  const submitButtonRect = ref<{ top: number; right: number; bottom: number; left: number } | null>(
+    null,
+  )
 
   // Track seen timestamps reactively (bumped on markSeen/markAllSeen)
   const seenMap = ref<Record<string, number>>(loadSeenMap())

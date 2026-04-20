@@ -854,6 +854,151 @@ export const cancelBet = onCall(async (request) => {
   return { success: true }
 })
 
+export const editBet = onCall(async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
+
+  const { marketId, betId, question, outcomes, excludedMembers, closesAt, database } =
+    request.data as {
+      marketId: string
+      betId: string
+      question?: string
+      outcomes?: string[]
+      excludedMembers?: string[]
+      closesAt?: string
+      database?: string
+    }
+  const db = getDb(database)
+
+  if (!marketId || !betId) {
+    throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')
+  }
+
+  const marketRef = db.collection('markets').doc(marketId)
+  const betRef = marketRef.collection('bets').doc(betId)
+
+  await db.runTransaction(async (txn) => {
+    const betSnap = await txn.get(betRef)
+    if (!betSnap.exists) {
+      throw new HttpsError('not-found', 'Bet not found')
+    }
+
+    const bet = betSnap.data()!
+
+    if (bet.createdBy !== uid) {
+      throw new HttpsError('permission-denied', 'Only the bet creator can edit this bet')
+    }
+
+    if (bet.status !== 'open') {
+      throw new HttpsError('failed-precondition', 'Only open bets can be edited')
+    }
+
+    const updates: Record<string, unknown> = {}
+
+    // Check if anyone has traded on this bet
+    const tradesSnap = await txn.get(betRef.collection('trades').limit(1))
+    const hasTrades = !tradesSnap.empty
+
+    // Question: only editable if no trades
+    if (question !== undefined) {
+      if (hasTrades) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Cannot edit question after trades have been placed',
+        )
+      }
+      if (!question.trim()) {
+        throw new HttpsError('invalid-argument', 'Question cannot be empty')
+      }
+      updates.question = question.trim()
+    }
+
+    // Outcomes: only editable if no trades
+    if (outcomes !== undefined) {
+      if (hasTrades) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Cannot edit outcomes after trades have been placed',
+        )
+      }
+      if (!Array.isArray(outcomes) || outcomes.filter((o) => o.trim()).length < 2) {
+        throw new HttpsError('invalid-argument', 'At least 2 non-empty outcomes are required')
+      }
+      if (outcomes.length > 10) {
+        throw new HttpsError('invalid-argument', 'Maximum 10 outcomes allowed')
+      }
+      const trimmed = outcomes.filter((o) => o.trim()).map((o) => o.trim())
+      updates.outcomes = trimmed
+      updates.sharesSold = new Array(trimmed.length).fill(0)
+    }
+
+    // Excluded members: can only add, not remove; new members must not have traded
+    if (excludedMembers !== undefined) {
+      const currentExcluded: string[] = bet.excludedMembers || []
+      const newExcluded = excludedMembers.filter(
+        (id: string) => typeof id === 'string' && id.length > 0,
+      )
+
+      // Check no existing excluded members are being removed
+      for (const id of currentExcluded) {
+        if (!newExcluded.includes(id)) {
+          throw new HttpsError('failed-precondition', 'Cannot remove previously excluded members')
+        }
+      }
+
+      // Check newly added excluded members haven't already traded
+      const newlyAdded = newExcluded.filter((id: string) => !currentExcluded.includes(id))
+      if (newlyAdded.length > 0) {
+        const positionsSnap = await txn.get(betRef.collection('positions'))
+        const tradedUserIds = new Set(
+          positionsSnap.docs
+            .filter((d) => {
+              const pos = d.data()
+              return pos.totalCost > 0 || (pos.shares as number[]).some((s: number) => s > 0)
+            })
+            .map((d) => d.id),
+        )
+        for (const id of newlyAdded) {
+          if (tradedUserIds.has(id)) {
+            const memberDoc = await txn.get(marketRef.collection('members').doc(id))
+            const name = memberDoc.exists ? memberDoc.data()!.displayName : 'A member'
+            throw new HttpsError(
+              'failed-precondition',
+              `${name} has already placed trades and cannot be excluded`,
+            )
+          }
+        }
+      }
+
+      updates.excludedMembers = newExcluded
+    }
+
+    // Close date: can only extend (move further into future)
+    if (closesAt !== undefined) {
+      const newCloseDate = new Date(closesAt)
+      if (isNaN(newCloseDate.getTime())) {
+        throw new HttpsError('invalid-argument', 'Invalid close date')
+      }
+      const currentCloseTime = bet.closesAt.toDate().getTime()
+      if (newCloseDate.getTime() <= currentCloseTime) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Close date can only be extended, not shortened',
+        )
+      }
+      updates.closesAt = Timestamp.fromDate(newCloseDate)
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new HttpsError('invalid-argument', 'No changes provided')
+    }
+
+    txn.update(betRef, updates)
+  })
+
+  return { success: true }
+})
+
 export const addComment = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')

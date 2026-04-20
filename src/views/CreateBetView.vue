@@ -164,7 +164,7 @@ async function handleSubmit() {
 
       <v-text-field
         v-model="closesAt"
-        label="Betting closes at"
+        label="Closes at"
         type="datetime-local"
         variant="outlined"
         :disabled="submitting"

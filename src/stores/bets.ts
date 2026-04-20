@@ -401,6 +401,45 @@ export const useBetsStore = defineStore('bets', () => {
     }
   }
 
+  async function editBet(
+    betId: string,
+    data: {
+      question?: string
+      outcomes?: string[]
+      excludedMembers?: string[]
+      closesAt?: string
+    },
+  ) {
+    const marketStore = useMarketStore()
+    if (!marketStore.market) throw new Error('No market')
+
+    error.value = ''
+    try {
+      const fn = httpsCallable<
+        {
+          marketId: string
+          betId: string
+          question?: string
+          outcomes?: string[]
+          excludedMembers?: string[]
+          closesAt?: string
+          database: string
+        },
+        { success: boolean }
+      >(functions, 'editBet')
+
+      await fn({
+        marketId: marketStore.market.id,
+        betId,
+        ...data,
+        database: dbName,
+      })
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : 'Failed to edit bet'
+      throw e
+    }
+  }
+
   return {
     bets,
     currentPosition,
@@ -420,6 +459,7 @@ export const useBetsStore = defineStore('bets', () => {
     executeTrade,
     resolveBet,
     cancelBet,
+    editBet,
     cleanup,
   }
 })

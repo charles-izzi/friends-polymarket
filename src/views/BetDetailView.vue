@@ -54,8 +54,19 @@ const submitting = ref(false)
 const resolveOutcome = ref(0)
 const showResolveDialog = ref(false)
 const showCancelDialog = ref(false)
+const showEditDialog = ref(false)
 const resolving = ref(false)
+const editSubmitting = ref(false)
 const detailTab = ref('chart')
+
+// Edit form state
+const editQuestion = ref('')
+const editOutcomes = ref<string[]>([])
+const editType = ref<'binary' | 'multiple_choice'>('binary')
+const editExcludedMembers = ref<string[]>([])
+const editClosesAt = ref('')
+const editValidated = ref(false)
+const editErrors = ref<Record<string, string>>({})
 
 const now = ref(Date.now())
 let nowInterval: ReturnType<typeof setInterval> | null = null
@@ -73,6 +84,13 @@ const effectiveStatus = computed(() => {
 const isCreator = computed(() => bet.value?.createdBy === authStore.user?.uid)
 
 const isExcluded = computed(() => bet.value?.excludedMembers.includes(authStore.user?.uid ?? ''))
+
+const hasTrades = computed(() => (betsStore.trades.length ?? 0) > 0)
+
+const excludedMemberNames = computed(() => {
+  if (!bet.value || bet.value.excludedMembers.length === 0) return []
+  return bet.value.excludedMembers.map((id) => memberName(id)).filter((n) => n !== 'Unknown')
+})
 
 const canTrade = computed(() => {
   if (!bet.value || effectiveStatus.value !== 'open' || isExcluded.value) return false
@@ -265,6 +283,129 @@ async function handleCancel() {
   }
 }
 
+function openEditDialog() {
+  if (!bet.value) return
+  editQuestion.value = bet.value.question
+  editOutcomes.value = [...bet.value.outcomes]
+  editType.value = bet.value.type
+  editExcludedMembers.value = [...bet.value.excludedMembers]
+  // Format closesAt for datetime-local input
+  const d = bet.value.closesAt.toDate()
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  editClosesAt.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  editValidated.value = false
+  editErrors.value = {}
+  showEditDialog.value = true
+}
+
+function addEditOutcome() {
+  editOutcomes.value.push('')
+}
+
+function removeEditOutcome(index: number) {
+  editOutcomes.value.splice(index, 1)
+}
+
+function moveEditOutcome(index: number, direction: -1 | 1) {
+  const target = index + direction
+  if (target < 0 || target >= editOutcomes.value.length) return
+  const arr = editOutcomes.value
+  ;[arr[index], arr[target]] = [arr[target]!, arr[index]!]
+}
+
+async function handleEditSubmit() {
+  if (!bet.value) return
+  editValidated.value = true
+  editErrors.value = {}
+
+  const changes: {
+    question?: string
+    outcomes?: string[]
+    excludedMembers?: string[]
+    closesAt?: string
+  } = {}
+
+  // Validate question
+  if (editQuestion.value.trim() !== bet.value.question) {
+    if (!editQuestion.value.trim()) {
+      editErrors.value.question = 'Question is required'
+    } else {
+      changes.question = editQuestion.value.trim()
+    }
+  }
+
+  // Validate outcomes
+  if (!hasTrades.value) {
+    const trimmed = editOutcomes.value.filter((o) => o.trim())
+    const origTrimmed = bet.value.outcomes
+    const changed =
+      trimmed.length !== origTrimmed.length || trimmed.some((o, i) => o.trim() !== origTrimmed[i])
+    if (changed) {
+      if (trimmed.length < 2) {
+        editErrors.value.outcomes = 'At least 2 non-empty outcomes are required'
+      } else {
+        changes.outcomes = trimmed.map((o) => o.trim())
+      }
+    }
+  }
+
+  // Validate excluded members
+  const origExcluded = bet.value.excludedMembers
+  const newExcluded = editExcludedMembers.value
+  if (JSON.stringify(origExcluded.slice().sort()) !== JSON.stringify(newExcluded.slice().sort())) {
+    // Check no removals
+    const removed = origExcluded.filter((id) => !newExcluded.includes(id))
+    if (removed.length > 0) {
+      editErrors.value.excludedMembers = 'Cannot remove previously excluded members'
+    } else {
+      // Check newly added members haven't already traded
+      const newlyAdded = newExcluded.filter((id) => !origExcluded.includes(id))
+      const positions = betsStore.allPositions[betId.value] ?? []
+      const tradedIds = new Set(
+        positions
+          .filter((p) => p.totalCost > 0 || p.shares.some((s) => s > 0))
+          .map((p) => p.userId),
+      )
+      const alreadyTraded = newlyAdded.filter((id) => tradedIds.has(id))
+      if (alreadyTraded.length > 0) {
+        const names = alreadyTraded.map((id) => memberName(id)).join(', ')
+        editErrors.value.excludedMembers = `${names} already placed bets and cannot be excluded`
+      } else {
+        changes.excludedMembers = newExcluded
+      }
+    }
+  }
+
+  // Validate close date
+  if (editClosesAt.value) {
+    const newClose = new Date(editClosesAt.value)
+    const currentClose = bet.value.closesAt.toDate()
+    if (newClose.getTime() !== currentClose.getTime()) {
+      if (newClose.getTime() <= currentClose.getTime()) {
+        editErrors.value.closesAt = 'Close date can only be extended, not shortened'
+      } else {
+        changes.closesAt = newClose.toISOString()
+      }
+    }
+  }
+
+  if (Object.keys(editErrors.value).length > 0) return
+  if (Object.keys(changes).length === 0) {
+    showEditDialog.value = false
+    return
+  }
+
+  editSubmitting.value = true
+  try {
+    await betsStore.editBet(betId.value, changes)
+    showEditDialog.value = false
+  } catch (e: unknown) {
+    editErrors.value.general = e instanceof Error ? e.message : 'Failed to save changes'
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
 // --- Chart ---
 const OUTCOME_COLORS = [
   '#5b8fa8',
@@ -413,6 +554,16 @@ onUnmounted(() => {
         v-if="isCreator && bet && (effectiveStatus === 'open' || effectiveStatus === 'closed')"
       >
         <v-btn
+          icon="mdi-pencil"
+          variant="tonal"
+          size="small"
+          class="ml-1"
+          @click="openEditDialog()"
+        >
+          <v-icon>mdi-pencil</v-icon>
+          <v-tooltip activator="parent" location="bottom">Edit Bet</v-tooltip>
+        </v-btn>
+        <v-btn
           icon="mdi-gavel"
           color="primary"
           variant="tonal"
@@ -450,6 +601,15 @@ onUnmounted(() => {
           <p class="text-h6 font-weight-medium">{{ bet.question }}</p>
           <v-chip v-if="isExcluded" color="error" size="small" variant="tonal" class="mt-1">
             You are excluded
+          </v-chip>
+          <v-chip
+            v-else-if="excludedMemberNames.length > 0"
+            color="warning"
+            size="small"
+            variant="tonal"
+            class="mt-1"
+          >
+            Excluded: {{ excludedMemberNames.join(', ') }}
           </v-chip>
         </div>
         <div class="d-flex flex-column align-end justify-center ga-1 flex-shrink-0">
@@ -1029,6 +1189,139 @@ onUnmounted(() => {
         </v-card>
       </v-dialog>
 
+      <!-- Edit dialog -->
+      <v-dialog v-model="showEditDialog" max-width="500" persistent>
+        <v-card>
+          <v-card-title>Edit Bet</v-card-title>
+          <v-card-text>
+            <v-textarea
+              v-model="editQuestion"
+              label="Question"
+              variant="outlined"
+              rows="2"
+              :disabled="hasTrades || editSubmitting"
+              hide-details
+            />
+            <p v-if="editErrors.question" class="edit-field-error">{{ editErrors.question }}</p>
+            <p v-else-if="hasTrades" class="edit-field-hint">
+              Cannot change after trading has started
+            </p>
+            <div style="height: 8px" />
+
+            <template v-if="editType === 'multiple_choice'">
+              <fieldset class="outcomes-fieldset mb-1">
+                <legend class="outcomes-legend">Outcomes</legend>
+                <div v-for="(_, i) in editOutcomes" :key="i" class="d-flex align-center mb-2">
+                  <div class="d-flex flex-column mr-1">
+                    <v-btn
+                      icon="mdi-chevron-up"
+                      size="x-small"
+                      variant="text"
+                      density="compact"
+                      :disabled="i === 0 || hasTrades || editSubmitting"
+                      @click="moveEditOutcome(i, -1)"
+                    />
+                    <v-btn
+                      icon="mdi-chevron-down"
+                      size="x-small"
+                      variant="text"
+                      density="compact"
+                      :disabled="i === editOutcomes.length - 1 || hasTrades || editSubmitting"
+                      @click="moveEditOutcome(i, 1)"
+                    />
+                  </div>
+                  <v-text-field
+                    v-model="editOutcomes[i]"
+                    :placeholder="`Option ${i + 1}`"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    class="flex-grow-1"
+                    :disabled="hasTrades || editSubmitting"
+                  />
+                  <v-btn
+                    icon="mdi-close"
+                    size="small"
+                    variant="text"
+                    color="error"
+                    class="ml-1"
+                    :disabled="hasTrades || editSubmitting"
+                    @click="removeEditOutcome(i)"
+                  />
+                </div>
+                <p v-if="editErrors.outcomes" class="edit-field-error" style="margin-top: 4px">
+                  {{ editErrors.outcomes }}
+                </p>
+                <p v-else-if="hasTrades" class="edit-field-hint" style="margin-top: 4px">
+                  Cannot change after trading has started
+                </p>
+                <v-btn
+                  prepend-icon="mdi-plus"
+                  variant="tonal"
+                  size="small"
+                  :disabled="editOutcomes.length >= 10 || hasTrades || editSubmitting"
+                  class="mt-1"
+                  @click="addEditOutcome"
+                >
+                  Add option
+                </v-btn>
+              </fieldset>
+            </template>
+
+            <v-text-field
+              v-model="editClosesAt"
+              label="Closes at"
+              type="datetime-local"
+              variant="outlined"
+              :disabled="editSubmitting"
+              hide-details
+            />
+            <p v-if="editErrors.closesAt" class="edit-field-error">{{ editErrors.closesAt }}</p>
+            <p v-else class="edit-field-hint">Can only be extended, not shortened</p>
+            <div style="height: 8px" />
+
+            <v-select
+              v-model="editExcludedMembers"
+              :items="marketStore.members"
+              item-title="displayName"
+              item-value="userId"
+              label="Exclude members"
+              variant="outlined"
+              multiple
+              chips
+              closable-chips
+              hide-details
+              :disabled="editSubmitting"
+            />
+            <p v-if="editErrors.excludedMembers" class="edit-field-error" style="margin-top: 2px">
+              {{ editErrors.excludedMembers }}
+            </p>
+            <p v-else class="edit-field-hint" style="margin-top: 2px">
+              Can only add new exclusions
+            </p>
+
+            <v-alert
+              v-if="editErrors.general"
+              type="error"
+              variant="tonal"
+              class="mt-3"
+              density="compact"
+            >
+              {{ editErrors.general }}
+            </v-alert>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="showEditDialog = false" :disabled="editSubmitting"
+              >Cancel</v-btn
+            >
+            <v-btn color="primary" :loading="editSubmitting" @click="handleEditSubmit">
+              Save Changes
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+
       <!-- Cancel dialog -->
       <v-dialog v-model="showCancelDialog" max-width="400">
         <v-card>
@@ -1143,5 +1436,29 @@ onUnmounted(() => {
 }
 .thumb-only-slider :deep(.v-slider-thumb__surface:active) {
   cursor: grabbing !important;
+}
+
+.outcomes-fieldset {
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.38);
+  border-radius: 4px;
+  padding: 12px;
+  margin: 0 0 16px;
+}
+.outcomes-legend {
+  font-size: 0.75rem;
+  padding: 0 5px;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+}
+.edit-field-error {
+  font-size: 0.7rem;
+  color: rgb(var(--v-theme-error));
+  margin: 2px 0 0;
+  line-height: 1.2;
+}
+.edit-field-hint {
+  font-size: 0.7rem;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  margin: 2px 0 0;
+  line-height: 1.2;
 }
 </style>
