@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSmartBack } from '@/composables/useSmartBack'
+import { useFilteredBets } from '@/composables/useFilteredBets'
 import { useBetsStore } from '@/stores/bets'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
@@ -13,6 +14,7 @@ const betsStore = useBetsStore()
 const marketStore = useMarketStore()
 const authStore = useAuthStore()
 const commentsStore = useCommentsStore()
+const { searchQuery } = useFilteredBets()
 const { goBack } = useSmartBack(`/${marketStore.market?.id ?? ''}`)
 
 const OUTCOME_COLORS = [
@@ -96,8 +98,6 @@ function hasStake(bet: Bet): boolean {
   return !!myPos && myPos.shares.some((s) => s > 0)
 }
 
-const searchQuery = ref('')
-
 const FILTERS_KEY = 'betListFilters'
 const savedFilters = localStorage.getItem(FILTERS_KEY)
 const filters = ref<string[]>(savedFilters ? JSON.parse(savedFilters) : ['open', '!stake'])
@@ -136,7 +136,11 @@ function toggleFilter(value: string) {
 const filteredBets = computed(() => {
   return betsStore.bets.filter((bet) => {
     const active = filters.value
-    if (active.length === 0) return true
+
+    const q = (searchQuery.value ?? '').trim().toLowerCase()
+    const matchesSearch = !q || bet.question.toLowerCase().includes(q)
+
+    if (active.length === 0) return matchesSearch
 
     const status = effectiveStatus(bet)
 
@@ -164,9 +168,6 @@ const filteredBets = computed(() => {
         : filterState('comments') === 'include'
           ? (bet.commentCount ?? 0) > 0
           : (bet.commentCount ?? 0) === 0
-
-    const q = (searchQuery.value ?? '').trim().toLowerCase()
-    const matchesSearch = !q || bet.question.toLowerCase().includes(q)
 
     return matchesStatus && matchesStake && matchesCreator && matchesComments && matchesSearch
   })

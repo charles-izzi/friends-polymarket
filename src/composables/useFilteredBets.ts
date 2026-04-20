@@ -1,10 +1,16 @@
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useBetsStore } from '@/stores/bets'
 import { useAuthStore } from '@/stores/auth'
 import type { Bet } from '@/types'
 
 const FILTERS_KEY = 'betListFilters'
+const SEARCH_KEY = 'betListSearch'
 const STATUS_VALUES = ['open', 'closed', 'resolved', 'cancelled']
+
+const searchQuery = ref(localStorage.getItem(SEARCH_KEY) ?? '')
+watch(searchQuery, (v) => {
+  localStorage.setItem(SEARCH_KEY, v ?? '')
+})
 
 function effectiveStatus(bet: Bet): string {
   if (bet.status !== 'open') return bet.status
@@ -14,9 +20,9 @@ function effectiveStatus(bet: Bet): string {
 
 /**
  * Returns the sorted+filtered bet list matching the persisted BetListView filters.
- * Accepts an optional search query for the list view; detail view can omit it.
+ * Search query is persisted in localStorage and shared across views.
  */
-export function useFilteredBets(searchQuery?: () => string) {
+export function useFilteredBets() {
   const betsStore = useBetsStore()
   const authStore = useAuthStore()
 
@@ -47,7 +53,10 @@ export function useFilteredBets(searchQuery?: () => string) {
     const filters = getFilters()
 
     const filtered = betsStore.bets.filter((bet) => {
-      if (filters.length === 0) return true
+      const q = (searchQuery.value ?? '').trim().toLowerCase()
+      const matchesSearch = !q || bet.question.toLowerCase().includes(q)
+
+      if (filters.length === 0) return matchesSearch
 
       const status = effectiveStatus(bet)
 
@@ -74,9 +83,6 @@ export function useFilteredBets(searchQuery?: () => string) {
             ? (bet.commentCount ?? 0) > 0
             : (bet.commentCount ?? 0) === 0
 
-      const q = searchQuery ? searchQuery().trim().toLowerCase() : ''
-      const matchesSearch = !q || bet.question.toLowerCase().includes(q)
-
       return matchesStatus && matchesStake && matchesCreator && matchesComments && matchesSearch
     })
 
@@ -92,5 +98,5 @@ export function useFilteredBets(searchQuery?: () => string) {
     })
   })
 
-  return { sortedBets, effectiveStatus }
+  return { sortedBets, effectiveStatus, searchQuery }
 }
