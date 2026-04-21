@@ -28,6 +28,7 @@ export interface Bet {
   status: 'open' | 'closed' | 'resolved' | 'cancelled'
   resolvedOutcome: number | null
   closesAt: Timestamp
+  resolvesAt?: Timestamp
   createdAt: Timestamp
   liquidityParam: number
   sharesSold: number[]
@@ -93,6 +94,7 @@ export type NotificationType =
   | 'bet_resolved'
   | 'bet_cancelled'
   | 'resolution_needed'
+  | 'first_wager'
 
 export interface AppNotification {
   id: string

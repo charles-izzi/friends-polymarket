@@ -115,6 +115,7 @@ const position = computed(() => betsStore.currentPosition)
 
 const submitting = ref(false)
 const resolveOutcome = ref(0)
+const resolveResolvesAt = ref('')
 const showResolveDialog = ref(false)
 const showCancelDialog = ref(false)
 const showEditDialog = ref(false)
@@ -196,6 +197,36 @@ const isCreator = computed(() => bet.value?.createdBy === authStore.user?.uid)
 
 const isExcluded = computed(() => bet.value?.excludedMembers.includes(authStore.user?.uid ?? ''))
 
+// Compute invalidated trade refund for the current user when resolvesAt is set
+const myInvalidatedCost = computed(() => {
+  if (!bet.value?.resolvesAt || !authStore.user?.uid) return 0
+  const cutoff = bet.value.resolvesAt.toMillis()
+  const uid = authStore.user.uid
+  return betsStore.trades
+    .filter((t) => t.userId === uid && t.createdAt && t.createdAt.toMillis() > cutoff)
+    .reduce((sum, t) => sum + t.cost, 0)
+})
+
+const myInvalidatedShares = computed(() => {
+  if (!bet.value?.resolvesAt || !authStore.user?.uid || bet.value.resolvedOutcome === null) return 0
+  const cutoff = bet.value.resolvesAt.toMillis()
+  const uid = authStore.user.uid
+  const outcome = bet.value.resolvedOutcome
+  return betsStore.trades
+    .filter(
+      (t) =>
+        t.userId === uid &&
+        t.outcomeIndex === outcome &&
+        t.createdAt &&
+        t.createdAt.toMillis() > cutoff,
+    )
+    .reduce((sum, t) => sum + t.shares, 0)
+})
+
+const creatorAwaitingFirstWager = computed(
+  () => isCreator.value && bet.value?.totalVolume === 0 && effectiveStatus.value === 'open',
+)
+
 const hasTrades = computed(() => (betsStore.trades.length ?? 0) > 0)
 
 const excludedMemberNames = computed(() => {
@@ -205,6 +236,8 @@ const excludedMemberNames = computed(() => {
 
 const canTrade = computed(() => {
   if (!bet.value || effectiveStatus.value !== 'open' || isExcluded.value) return false
+  // Creator cannot be first to wager
+  if (isCreator.value && bet.value.totalVolume === 0) return false
   return true
 })
 
@@ -377,11 +410,19 @@ async function handleTrades() {
 async function handleResolve() {
   resolving.value = true
   try {
-    await betsStore.resolveBet(betId.value, resolveOutcome.value)
+    const resolvesAt = resolveResolvesAt.value
+      ? new Date(resolveResolvesAt.value).toISOString()
+      : undefined
+    await betsStore.resolveBet(betId.value, resolveOutcome.value, resolvesAt)
     showResolveDialog.value = false
   } finally {
     resolving.value = false
   }
+}
+
+function openResolveDialog() {
+  resolveResolvesAt.value = ''
+  showResolveDialog.value = true
 }
 
 async function handleCancel() {
@@ -726,7 +767,7 @@ onUnmounted(() => {
             variant="tonal"
             size="small"
             :class="['ml-1', { 'pulse-shadow': effectiveStatus === 'closed' }]"
-            @click="showResolveDialog = true"
+            @click="openResolveDialog()"
           >
             <v-icon>mdi-gavel</v-icon>
             <v-tooltip activator="parent" location="bottom">
@@ -807,12 +848,16 @@ onUnmounted(() => {
             <tbody>
               <tr>
                 <td class="pr-4 text-medium-emphasis">Cost</td>
-                <td class="text-right">${{ position.totalCost.toFixed(2) }}</td>
+                <td class="text-right">
+                  ${{ (position.totalCost - myInvalidatedCost).toFixed(2) }}
+                </td>
               </tr>
               <tr>
                 <td class="pr-4 text-medium-emphasis">Payout</td>
                 <td class="text-right">
-                  ${{ (position.shares[bet.resolvedOutcome] ?? 0).toFixed(2) }}
+                  ${{
+                    ((position.shares[bet.resolvedOutcome] ?? 0) - myInvalidatedShares).toFixed(2)
+                  }}
                 </td>
               </tr>
               <tr>
@@ -820,27 +865,49 @@ onUnmounted(() => {
                 <td
                   class="text-right font-weight-bold"
                   :class="
-                    (position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost >= 0
+                    (position.shares[bet.resolvedOutcome] ?? 0) -
+                      myInvalidatedShares -
+                      (position.totalCost - myInvalidatedCost) >=
+                    0
                       ? 'text-success'
                       : 'text-error'
                   "
                 >
                   {{
-                    (position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost >= 0
+                    (position.shares[bet.resolvedOutcome] ?? 0) -
+                      myInvalidatedShares -
+                      (position.totalCost - myInvalidatedCost) >=
+                    0
                       ? '+'
                       : ''
                   }}${{
-                    ((position.shares[bet.resolvedOutcome] ?? 0) - position.totalCost).toFixed(2)
+                    (
+                      (position.shares[bet.resolvedOutcome] ?? 0) -
+                      myInvalidatedShares -
+                      (position.totalCost - myInvalidatedCost)
+                    ).toFixed(2)
                   }}
                 </td>
               </tr>
+              <tr v-if="myInvalidatedCost > 0">
+                <td class="pr-4 text-medium-emphasis">Refund</td>
+                <td class="text-right text-success">+${{ myInvalidatedCost.toFixed(2) }}</td>
+              </tr>
             </tbody>
           </table>
+          <div v-if="bet.resolvesAt && myInvalidatedCost > 0" class="text-body-2 mt-2">
+            Trades after {{ bet.resolvesAt.toDate().toLocaleString() }} were refunded.
+          </div>
         </v-alert>
 
         <!-- Cancelled banner -->
         <v-alert v-if="bet.status === 'cancelled'" type="warning" variant="tonal" class="mb-4">
           This bet was cancelled. All positions have been refunded at cost basis.
+        </v-alert>
+
+        <!-- Creator waiting for first wager -->
+        <v-alert v-if="creatorAwaitingFirstWager" type="info" variant="tonal" class="mb-4">
+          As bet creator, you can't be the first person to make a trade.
         </v-alert>
 
         <!-- Chart / Trades tabs -->
@@ -858,7 +925,10 @@ onUnmounted(() => {
 
         <v-window v-model="detailTab" class="mb-4" :touch="false">
           <v-window-item value="chart">
-            <div class="mt-2 mb-4" style="min-height: 180px">
+            <div
+              class="mt-2 mb-4"
+              :style="{ minHeight: betsStore.trades.length > 0 ? '180px' : undefined }"
+            >
               <SvgLineChart
                 :series="chartSeries"
                 :labels="chartLabels"
@@ -1400,6 +1470,25 @@ onUnmounted(() => {
                   :value="i"
                 />
               </v-radio-group>
+
+              <div class="d-flex align-center mb-1">
+                <span class="text-body-2">Resolution time (optional)</span>
+                <v-btn icon size="x-small" variant="text" class="ml-1">
+                  <v-icon size="14">mdi-information-outline</v-icon>
+                  <v-tooltip activator="parent" location="top" max-width="280">
+                    If the true outcome was revealed before betting closed, set the time it became
+                    known. All trades made after this time will be refunded.
+                  </v-tooltip>
+                </v-btn>
+              </div>
+              <v-text-field
+                v-model="resolveResolvesAt"
+                type="datetime-local"
+                variant="outlined"
+                density="compact"
+                hide-details
+                :disabled="resolving"
+              />
             </v-card-text>
             <v-card-actions>
               <v-spacer />

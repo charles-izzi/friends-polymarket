@@ -155,7 +155,17 @@ export const useBetsStore = defineStore('bets', () => {
             body: `${bet.question}${timeLeft ? ` · ${timeLeft}` : ''}`,
           })
         }
-      } else if (prev.status !== bet.status) {
+      } else if (prev.totalVolume === 0 && bet.totalVolume > 0 && bet.createdBy === uid) {
+        // First wager placed on our bet — notify creator
+        notificationsStore.push({
+          type: 'first_wager',
+          betId: bet.id,
+          title: 'First wager placed!',
+          body: `You can now make trades on your bet — someone bet on "${bet.question}"`,
+        })
+      }
+
+      if (prev && prev.status !== bet.status) {
         // Status changed
         if (
           bet.status === 'resolved' &&
@@ -169,11 +179,24 @@ export const useBetsStore = defineStore('bets', () => {
             const payout = myPos.shares[bet.resolvedOutcome] ?? 0
             const profit = payout - myPos.totalCost
             const profitStr = `${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`
+            const refundStr =
+              bet.resolvesAt && myPos.totalCost > 0
+                ? (() => {
+                    const cutoff = bet.resolvesAt!.toMillis()
+                    const myTrades = trades.value.filter(
+                      (t: Trade) =>
+                        t.userId === uid && t.createdAt && t.createdAt.toMillis() > cutoff,
+                    )
+                    if (myTrades.length === 0) return ''
+                    const refund = myTrades.reduce((sum: number, t: Trade) => sum + t.cost, 0)
+                    return ` · Refund: $${refund.toFixed(2)}`
+                  })()
+                : ''
             notificationsStore.push({
               type: 'bet_resolved',
               betId: bet.id,
               title: `Resolved: "${bet.outcomes[bet.resolvedOutcome]}" won!`,
-              body: `Cost: $${myPos.totalCost.toFixed(2)} · Payout: $${payout.toFixed(2)} · Profit: ${profitStr}`,
+              body: `Cost: $${myPos.totalCost.toFixed(2)} · Payout: $${payout.toFixed(2)} · Profit: ${profitStr}${refundStr}`,
             })
           }
         } else if (bet.status === 'cancelled' && !selfActedBetIds.has(bet.id)) {
@@ -354,14 +377,20 @@ export const useBetsStore = defineStore('bets', () => {
     }
   }
 
-  async function resolveBet(betId: string, outcomeIndex: number) {
+  async function resolveBet(betId: string, outcomeIndex: number, resolvesAt?: string) {
     const marketStore = useMarketStore()
     if (!marketStore.market) throw new Error('No market')
 
     error.value = ''
     try {
       const fn = httpsCallable<
-        { marketId: string; betId: string; outcomeIndex: number; database: string },
+        {
+          marketId: string
+          betId: string
+          outcomeIndex: number
+          resolvesAt?: string
+          database: string
+        },
         { success: boolean }
       >(functions, 'resolveBet')
 
@@ -370,6 +399,7 @@ export const useBetsStore = defineStore('bets', () => {
         marketId: marketStore.market.id,
         betId,
         outcomeIndex,
+        ...(resolvesAt ? { resolvesAt } : {}),
         database: dbName,
       })
     } catch (e: unknown) {

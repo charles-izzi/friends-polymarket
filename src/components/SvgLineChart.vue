@@ -179,7 +179,11 @@ function onMouseLeave() {
 </script>
 
 <template>
-  <div ref="containerRef" style="width: 100%" :style="{ height: height + 'px' }">
+  <div
+    ref="containerRef"
+    style="width: 100%"
+    :style="pointCount >= 2 ? { height: height + 'px' } : {}"
+  >
     <template v-if="pointCount >= 2 && containerWidth > 0">
       <svg
         :viewBox="`0 0 ${svgW} ${height}`"
@@ -256,7 +260,7 @@ function onMouseLeave() {
         </template>
       </svg>
     </template>
-    <p v-else class="text-body-2 text-medium-emphasis">Not enough data to display chart</p>
+    <p v-else class="text-body-2 text-medium-emphasis">No trades yet</p>
   </div>
 </template>
 

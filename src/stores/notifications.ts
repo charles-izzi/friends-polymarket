@@ -52,6 +52,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
         return 'mdi-cancel'
       case 'resolution_needed':
         return 'mdi-alert-circle'
+      case 'first_wager':
+        return 'mdi-account-check'
     }
   }
 
@@ -65,6 +67,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
         return 'warning'
       case 'resolution_needed':
         return 'warning'
+      case 'first_wager':
+        return 'success'
     }
   }
 

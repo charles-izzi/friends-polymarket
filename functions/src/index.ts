@@ -496,6 +496,14 @@ export const executeTrade = onCall(async (request) => {
       throw new HttpsError('failed-precondition', 'Bet has closed')
     }
 
+    // Creator cannot be the first to wager on their own bet
+    if (uid === bet.createdBy && (bet.totalVolume ?? 0) === 0) {
+      throw new HttpsError(
+        'failed-precondition',
+        'You must wait for someone else to place the first wager',
+      )
+    }
+
     // Check user is not excluded
     if (bet.excludedMembers && bet.excludedMembers.includes(uid)) {
       throw new HttpsError('permission-denied', 'You are excluded from this bet')
@@ -577,26 +585,58 @@ export const executeTrade = onCall(async (request) => {
       cost,
       newBalance: member.balance - cost,
       priceAfter,
+      _isFirstTrade: totalVolume === 0,
+      _createdBy: bet.createdBy as string,
+      _question: bet.question as string,
     }
   })
 
-  return result
+  // Notify bet creator when the first wager is placed on their bet
+  if (result._isFirstTrade && result._createdBy !== uid) {
+    sendPushToUsers(
+      db,
+      marketId,
+      [result._createdBy],
+      {
+        title: 'First wager placed!',
+        body: `You can now make trades on your bet — someone bet on "${result._question}"`,
+      },
+      { betId, type: 'first_wager', marketId },
+    ).catch(() => {})
+  }
+
+  return {
+    tradeId: result.tradeId,
+    cost: result.cost,
+    newBalance: result.newBalance,
+    priceAfter: result.priceAfter,
+  }
 })
 
 export const resolveBet = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { marketId, betId, outcomeIndex, database } = request.data as {
+  const { marketId, betId, outcomeIndex, resolvesAt, database } = request.data as {
     marketId: string
     betId: string
     outcomeIndex: number
+    resolvesAt?: string
     database?: string
   }
   const db = getDb(database)
 
   if (!marketId || !betId || typeof outcomeIndex !== 'number') {
     throw new HttpsError('invalid-argument', 'Market ID, bet ID, and outcome index are required')
+  }
+
+  // Validate optional resolvesAt
+  let resolveDate: Date | null = null
+  if (resolvesAt) {
+    resolveDate = new Date(resolvesAt)
+    if (isNaN(resolveDate.getTime())) {
+      throw new HttpsError('invalid-argument', 'Invalid resolution time')
+    }
   }
 
   const marketRef = db.collection('markets').doc(marketId)
@@ -630,6 +670,29 @@ export const resolveBet = onCall(async (request) => {
     const tradesSnap = await txn.get(betRef.collection('trades').orderBy('createdAt', 'asc'))
     const allTrades = tradesSnap.docs.map((d) => d.data())
 
+    // If resolvesAt is set, compute per-user invalidated trade amounts
+    const resolveCutoff = resolveDate ? Timestamp.fromDate(resolveDate) : null
+    const invalidatedCostPerUser = new Map<string, number>()
+    const invalidatedSharesPerUser = new Map<string, number[]>()
+
+    if (resolveCutoff) {
+      for (const t of allTrades) {
+        if (t.createdAt && t.createdAt.toMillis() > resolveCutoff.toMillis()) {
+          const userId: string = t.userId
+          invalidatedCostPerUser.set(
+            userId,
+            (invalidatedCostPerUser.get(userId) ?? 0) + (t.cost as number),
+          )
+          if (!invalidatedSharesPerUser.has(userId)) {
+            invalidatedSharesPerUser.set(userId, new Array(bet.outcomes.length).fill(0))
+          }
+          const shares = invalidatedSharesPerUser.get(userId)!
+          shares[t.outcomeIndex as number] =
+            (shares[t.outcomeIndex as number] ?? 0) + (t.shares as number)
+        }
+      }
+    }
+
     // Pre-compute entry info per user: first trade's priceAfter gives entry probabilities
     const userFirstTrade = new Map<string, { priceAfter: number[] }>()
     for (const t of allTrades) {
@@ -641,33 +704,47 @@ export const resolveBet = onCall(async (request) => {
     // Read all member docs for winners + all staked members for stats
     const winnerUpdates: {
       memberRef: FirebaseFirestore.DocumentReference
-      winningShares: number
+      balanceCredit: number
       currentBalance: number
     }[] = []
-    const stakedUsers: { userId: string; totalCost: number; payout: number }[] = []
+    const stakedUsers: { userId: string; totalCost: number; payout: number; refund: number }[] = []
     const memberBalances = new Map<string, number>()
 
+    // Compute effective (valid) positions per user
     for (const posDoc of positionsSnap.docs) {
       const pos = posDoc.data()
-      const totalShares = (pos.shares as number[]).reduce((s, v) => s + v, 0)
-      if (totalShares > 0 || pos.totalCost > 0) {
-        const payout = pos.shares[outcomeIndex] ?? 0
-        stakedUsers.push({ userId: posDoc.id, totalCost: pos.totalCost, payout })
+      const rawShares: number[] = pos.shares
+      const rawCost: number = pos.totalCost
+
+      // Subtract invalidated trades to get valid position
+      const invShares = invalidatedSharesPerUser.get(posDoc.id)
+      const invCost = invalidatedCostPerUser.get(posDoc.id) ?? 0
+      const validShares = invShares ? rawShares.map((s, i) => s - (invShares[i] ?? 0)) : rawShares
+      const validCost = rawCost - invCost
+
+      const totalValidShares = validShares.reduce((s, v) => s + v, 0)
+      if (totalValidShares > 0 || validCost > 0 || invCost > 0) {
+        const payout = validShares[outcomeIndex] ?? 0
+        stakedUsers.push({ userId: posDoc.id, totalCost: validCost, payout, refund: invCost })
       }
-      const winningShares: number = pos.shares[outcomeIndex] ?? 0
-      // Read member doc for all staked users (needed for balance + stats)
+
+      const validWinningShares = validShares[outcomeIndex] ?? 0
+      // Read member doc for all users who have any position (needed for balance + stats + refund)
       if (
-        winningShares > 0 ||
-        (pos.shares as number[]).reduce((s: number, v: number) => s + v, 0) > 0 ||
-        pos.totalCost > 0
+        validWinningShares > 0 ||
+        validShares.reduce((s: number, v: number) => s + v, 0) > 0 ||
+        validCost > 0 ||
+        invCost > 0
       ) {
         const memberRef = marketRef.collection('members').doc(posDoc.id)
         const memberSnap = await txn.get(memberRef)
         if (memberSnap.exists) {
           const bal = memberSnap.data()!.balance as number
           memberBalances.set(posDoc.id, bal)
-          if (winningShares > 0) {
-            winnerUpdates.push({ memberRef, winningShares, currentBalance: bal })
+          // Credit = valid winning shares + refund for invalidated trades
+          const balanceCredit = validWinningShares + invCost
+          if (balanceCredit > 0) {
+            winnerUpdates.push({ memberRef, balanceCredit, currentBalance: bal })
           }
         }
       }
@@ -686,16 +763,19 @@ export const resolveBet = onCall(async (request) => {
     txn.update(betRef, {
       status: 'resolved',
       resolvedOutcome: outcomeIndex,
+      ...(resolveDate ? { resolvesAt: Timestamp.fromDate(resolveDate) } : {}),
     })
 
-    for (const { memberRef, winningShares, currentBalance } of winnerUpdates) {
-      txn.update(memberRef, { balance: currentBalance + winningShares })
+    for (const { memberRef, balanceCredit, currentBalance } of winnerUpdates) {
+      txn.update(memberRef, { balance: currentBalance + balanceCredit })
     }
 
-    // Write stats for each staked user
+    // Write stats for each staked user (based on valid positions only)
     for (const user of stakedUsers) {
       const posDoc = positionsSnap.docs.find((d) => d.id === user.userId)
-      const shares: number[] = posDoc ? posDoc.data().shares : []
+      const rawShares: number[] = posDoc ? posDoc.data().shares : []
+      const invShares = invalidatedSharesPerUser.get(user.userId)
+      const shares = invShares ? rawShares.map((s, i) => s - (invShares[i] ?? 0)) : rawShares
       const primaryOutcome = shares.reduce((best, s, i) => (s > (shares[best] ?? 0) ? i : best), 0)
 
       const firstTrade = userFirstTrade.get(user.userId)
@@ -709,7 +789,8 @@ export const resolveBet = onCall(async (request) => {
       }
 
       const currentBalance = memberBalances.get(user.userId) ?? 0
-      const balanceAfter = currentBalance + (user.payout > 0 ? user.payout : 0)
+      const invCost = invalidatedCostPerUser.get(user.userId) ?? 0
+      const balanceAfter = currentBalance + (user.payout > 0 ? user.payout : 0) + invCost
 
       const record: ResolvedBetRecord = {
         betId,
@@ -746,13 +827,14 @@ export const resolveBet = onCall(async (request) => {
     if (user.userId === uid) continue
     const profit = user.payout - user.totalCost
     const profitStr = `${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}`
+    const refundStr = user.refund > 0 ? ` · Refund: $${user.refund.toFixed(2)}` : ''
     sendPushToUsers(
       db,
       marketId,
       [user.userId],
       {
         title: `Resolved: "${pushData.winningOutcome}" won!`,
-        body: `Cost: $${user.totalCost.toFixed(2)} · Payout: $${user.payout.toFixed(2)} · Profit: ${profitStr}`,
+        body: `Cost: $${user.totalCost.toFixed(2)} · Payout: $${user.payout.toFixed(2)} · Profit: ${profitStr}${refundStr}`,
       },
       { betId, type: 'bet_resolved', marketId },
     ).catch(() => {})
