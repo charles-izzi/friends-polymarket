@@ -502,11 +502,7 @@ onUnmounted(() => {
 
           <div class="px-3 py-2">
             <div
-              v-if="
-                !drawerExpanded[betId] &&
-                (betsStore.bets.find((b) => b.id === betId)?.commentCount ?? 0) >
-                  (drawerComments[betId]?.length ?? 0)
-              "
+              v-if="!drawerExpanded[betId] && (drawerComments[betId]?.length ?? 0) > 3"
               class="d-flex justify-center mb-1"
             >
               <v-btn
@@ -547,11 +543,19 @@ onUnmounted(() => {
                   </span>
                 </div>
                 <p
+                  v-if="comment.text"
                   class="text-body-2 ml-2"
-                  style="white-space: pre-wrap; word-break: break-word; margin-top: -1px"
+                  style="white-space: pre-wrap; word-break: break-word; margin: 4px 10px 0"
                 >
                   {{ comment.text }}
                 </p>
+                <span
+                  v-if="comment.imageUrl"
+                  class="text-caption text-medium-emphasis ml-2 d-block"
+                  style="margin: 4px 10px 0; line-height: 1.2"
+                >
+                  <v-icon icon="mdi-image" size="x-small" class="mr-1" />Image
+                </span>
               </div>
             </div>
           </div>
