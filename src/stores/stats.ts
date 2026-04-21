@@ -70,19 +70,22 @@ export const useStatsStore = defineStore('stats', () => {
 
     // Collect all unique resolution timestamps across all users, sorted chronologically
 
-    // Build a timeline: for each user, walk their resolvedBets and record balanceAfter at each step
-    // We'll merge these into a unified timeline
-    const userTimelines = new Map<string, { ts: number; balance: number }[]>()
+    // Build a timeline: for each user, walk their resolvedBets and record cumulative P/L at each step
+    const userTimelines = new Map<string, { ts: number; pnl: number }[]>()
     for (const [uid, stats] of Object.entries(allStats)) {
+      let cumPnL = 0
       userTimelines.set(
         uid,
-        stats.resolvedBets.map((r) => ({
-          ts:
-            typeof r.resolvedAt === 'number'
-              ? r.resolvedAt
-              : (r.resolvedAt as { seconds: number }).seconds * 1000,
-          balance: r.balanceAfter,
-        })),
+        stats.resolvedBets.map((r) => {
+          cumPnL += r.profit
+          return {
+            ts:
+              typeof r.resolvedAt === 'number'
+                ? r.resolvedAt
+                : (r.resolvedAt as { seconds: number }).seconds * 1000,
+            pnl: cumPnL,
+          }
+        }),
       )
     }
 
@@ -93,7 +96,7 @@ export const useStatsStore = defineStore('stats', () => {
     }
     const sortedTs = [...allTimestamps].sort((a, b) => a - b)
 
-    // At each timestamp, get latest known balance per user, then rank
+    // At each timestamp, get latest known P/L per user, then rank
     const lastKnown = new Map<string, number>()
     const ranks: Record<string, number[]> = {}
     for (const uid of userIds) ranks[uid] = []
@@ -103,14 +106,14 @@ export const useStatsStore = defineStore('stats', () => {
       // Update lastKnown for any user who has a record at this timestamp
       for (const [uid, timeline] of userTimelines) {
         const pt = timeline.find((p) => p.ts === ts)
-        if (pt) lastKnown.set(uid, pt.balance)
+        if (pt) lastKnown.set(uid, pt.pnl)
       }
 
-      // Rank users by balance (descending)
+      // Rank users by P/L (descending)
       const entries = userIds
         .filter((uid) => lastKnown.has(uid))
-        .map((uid) => ({ uid, balance: lastKnown.get(uid)! }))
-        .sort((a, b) => b.balance - a.balance)
+        .map((uid) => ({ uid, pnl: lastKnown.get(uid)! }))
+        .sort((a, b) => b.pnl - a.pnl)
 
       const rankMap = new Map<string, number>()
       entries.forEach((e, i) => rankMap.set(e.uid, i + 1))

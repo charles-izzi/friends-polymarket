@@ -126,15 +126,18 @@ const MEMBER_COLORS = [
 const rankSeries = computed<ChartSeries[]>(() => {
   const { ranks } = statsStore.leaderboardRankHistory
   const members = marketStore.members
-  return Object.entries(ranks).map(([uid, data], i) => {
+  const entries = Object.entries(ranks).map(([uid, data], i) => {
     const member = members.find((m) => m.userId === uid)
     return {
       label: member?.displayName ?? uid.slice(0, 6),
       color:
         uid === authStore.user?.uid ? '#5b8fa8' : MEMBER_COLORS[(i + 1) % MEMBER_COLORS.length]!,
       data,
+      currentRank: data.length > 0 ? data[data.length - 1]! : Infinity,
     }
   })
+  entries.sort((a, b) => a.currentRank - b.currentRank)
+  return entries.map(({ label, color, data }) => ({ label, color, data }))
 })
 
 const rankLabels = computed(() => statsStore.leaderboardRankHistory.labels)
@@ -273,16 +276,20 @@ const rankYMax = computed(() => marketStore.members.length || 2)
           </v-list>
         </v-window-item>
         <v-window-item value="history">
-          <div v-if="rankSeries.length > 0 && rankLabels.length >= 2" class="pa-3">
+          <div class="pa-3">
             <SvgLineChart
               :series="rankSeries"
-              :labels="rankLabels"
               :y-min="1"
               :y-max="rankYMax"
               :y-format="(v: number) => `#${v.toFixed(0)}`"
               :invert-y="true"
+              :pad-left="28"
+              no-data-text="No ranks yet"
             />
-            <div class="d-flex flex-wrap ga-3 mt-2">
+            <div
+              v-if="rankSeries.length > 0 && rankLabels.length >= 2"
+              class="d-flex flex-column ga-1 mt-2"
+            >
               <div v-for="s in rankSeries" :key="s.label" class="d-flex align-center ga-1">
                 <div
                   :style="{
@@ -295,9 +302,6 @@ const rankYMax = computed(() => marketStore.members.length || 2)
                 <span class="text-caption">{{ s.label }}</span>
               </div>
             </div>
-          </div>
-          <div v-else class="pa-4 text-center text-medium-emphasis">
-            Not enough data yet. Rank history appears after at least 2 bets are resolved.
           </div>
         </v-window-item>
       </v-window>

@@ -16,6 +16,8 @@ const props = withDefaults(
     yFormat?: (v: number) => string
     height?: number
     invertY?: boolean
+    padLeft?: number
+    noDataText?: string
   }>(),
   {
     labels: () => [],
@@ -24,6 +26,8 @@ const props = withDefaults(
     yFormat: undefined,
     height: 180,
     invertY: false,
+    padLeft: 44,
+    noDataText: 'No trades yet',
   },
 )
 
@@ -49,10 +53,11 @@ onUnmounted(() => {
 })
 
 const svgW = computed(() => containerWidth.value)
-const PAD = { top: 6, right: 16, bottom: 22, left: 44 }
-const plotW = computed(() => svgW.value - PAD.left - PAD.right)
+const PAD_CONST = { top: 6, right: 16, bottom: 22 }
+const PAD = computed(() => ({ ...PAD_CONST, left: props.padLeft }))
+const plotW = computed(() => svgW.value - PAD.value.left - PAD.value.right)
 
-const plotH = computed(() => props.height - PAD.top - PAD.bottom)
+const plotH = computed(() => props.height - PAD_CONST.top - PAD_CONST.bottom)
 
 const dataRange = computed(() => {
   let min = Infinity
@@ -97,7 +102,7 @@ const xTicks = computed(() => {
   for (let i = 0; i < maxLabels; i++) {
     const idx = Math.round((i * (count - 1)) / (maxLabels - 1))
     ticks.push({
-      x: PAD.left + (idx / (count - 1)) * plotW.value,
+      x: PAD.value.left + (idx / (count - 1)) * plotW.value,
       label: props.labels[idx] ?? '',
     })
   }
@@ -107,9 +112,9 @@ const xTicks = computed(() => {
 function toY(val: number): number {
   const norm = (val - yMinVal.value) / ySpan.value
   if (props.invertY) {
-    return PAD.top + norm * plotH.value
+    return PAD_CONST.top + norm * plotH.value
   }
-  return PAD.top + (1 - norm) * plotH.value
+  return PAD_CONST.top + (1 - norm) * plotH.value
 }
 
 const svgPaths = computed(() => {
@@ -119,7 +124,7 @@ const svgPaths = computed(() => {
   return props.series.map((s) => {
     const d = s.data
       .map((v, i) => {
-        const x = PAD.left + (i / last) * plotW.value
+        const x = PAD.value.left + (i / last) * plotW.value
         const y = toY(v)
         return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
       })
@@ -139,7 +144,7 @@ const hoverIndex = ref<number | null>(null)
 const hoverInfo = computed(() => {
   if (hoverIndex.value === null || pointCount.value < 2) return null
   const last = pointCount.value - 1
-  const x = PAD.left + (hoverIndex.value / last) * plotW.value
+  const x = PAD.value.left + (hoverIndex.value / last) * plotW.value
   const values = props.series.map((s) => ({
     label: s.label,
     value: s.data[hoverIndex.value!] ?? 0,
@@ -163,7 +168,7 @@ function onMouseMove(e: MouseEvent) {
   let best = 0
   let bestDist = Infinity
   for (let i = 0; i <= last; i++) {
-    const px = PAD.left + (i / last) * plotW.value
+    const px = PAD.value.left + (i / last) * plotW.value
     const dist = Math.abs(px - mouseX)
     if (dist < bestDist) {
       bestDist = dist
@@ -198,7 +203,7 @@ function onMouseLeave() {
         <template v-for="tick in yTicks" :key="tick">
           <line
             :x1="PAD.left"
-            :x2="svgW - PAD.right"
+            :x2="svgW - PAD_CONST.right"
             :y1="toY(tick)"
             :y2="toY(tick)"
             stroke="rgba(128,128,128,0.15)"
@@ -238,8 +243,8 @@ function onMouseLeave() {
           <line
             :x1="hoverInfo.x"
             :x2="hoverInfo.x"
-            :y1="PAD.top"
-            :y2="PAD.top + plotH"
+            :y1="PAD_CONST.top"
+            :y2="PAD_CONST.top + plotH"
             stroke="rgba(128,128,128,0.4)"
             stroke-width="1"
             stroke-dasharray="4,3"
@@ -260,7 +265,7 @@ function onMouseLeave() {
         </template>
       </svg>
     </template>
-    <p v-else class="text-body-2 text-medium-emphasis">No trades yet</p>
+    <p v-else class="text-body-2 text-medium-emphasis">{{ noDataText }}</p>
   </div>
 </template>
 
