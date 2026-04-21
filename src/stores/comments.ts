@@ -9,7 +9,8 @@ import {
   query,
 } from 'firebase/firestore'
 import { getFunctions, httpsCallable } from 'firebase/functions'
-import { db, dbName } from '@/firebase'
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { db, dbName, storage } from '@/firebase'
 import { useMarketStore } from '@/stores/market'
 import { useBetsStore } from '@/stores/bets'
 import type { Comment } from '@/types'
@@ -107,15 +108,29 @@ export const useCommentsStore = defineStore('comments', () => {
     comments.value = []
   }
 
-  async function addComment(betId: string, text: string) {
+  async function addComment(betId: string, text: string, imageFile?: File | null) {
     const marketStore = useMarketStore()
     if (!marketStore.market) throw new Error('No market')
 
     error.value = ''
     submitting.value = true
     try {
+      let imageUrl: string | undefined
+
+      // Upload image to Firebase Storage if provided
+      if (imageFile) {
+        if (imageFile.size > 5 * 1024 * 1024) {
+          throw new Error('Image must be under 5 MB')
+        }
+        const ext = imageFile.name.split('.').pop() || 'jpg'
+        const path = `commentImages/${marketStore.market.id}/${betId}/${crypto.randomUUID()}.${ext}`
+        const fileRef = storageRef(storage, path)
+        await uploadBytes(fileRef, imageFile, { contentType: imageFile.type })
+        imageUrl = await getDownloadURL(fileRef)
+      }
+
       const fn = httpsCallable<
-        { marketId: string; betId: string; text: string; database: string },
+        { marketId: string; betId: string; text: string; imageUrl?: string; database: string },
         { commentId: string }
       >(functions, 'addComment')
 
@@ -123,6 +138,7 @@ export const useCommentsStore = defineStore('comments', () => {
         marketId: marketStore.market.id,
         betId,
         text,
+        ...(imageUrl ? { imageUrl } : {}),
         database: dbName,
       })
       // Mark this bet as seen immediately after posting

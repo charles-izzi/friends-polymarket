@@ -1003,10 +1003,11 @@ export const addComment = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
 
-  const { marketId, betId, text, database } = request.data as {
+  const { marketId, betId, text, imageUrl, database } = request.data as {
     marketId: string
     betId: string
     text: string
+    imageUrl?: string
     database?: string
   }
   const db = getDb(database)
@@ -1014,11 +1015,16 @@ export const addComment = onCall(async (request) => {
   if (!marketId || !betId) {
     throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')
   }
-  if (!text || typeof text !== 'string' || text.trim().length === 0) {
-    throw new HttpsError('invalid-argument', 'Comment text is required')
+  const trimmedText = text && typeof text === 'string' ? text.trim() : ''
+  const hasImage = typeof imageUrl === 'string' && imageUrl.length > 0
+  if (!trimmedText && !hasImage) {
+    throw new HttpsError('invalid-argument', 'Comment must include text or an image')
   }
-  if (text.trim().length > 500) {
+  if (trimmedText.length > 500) {
     throw new HttpsError('invalid-argument', 'Comment must be 500 characters or fewer')
+  }
+  if (hasImage && !imageUrl.startsWith('https://firebasestorage.googleapis.com/')) {
+    throw new HttpsError('invalid-argument', 'Invalid image URL')
   }
 
   const marketRef = db.collection('markets').doc(marketId)
@@ -1038,12 +1044,16 @@ export const addComment = onCall(async (request) => {
 
   // Write comment and update bet atomically
   const commentRef = betRef.collection('comments').doc()
-  const batch = db.batch()
-  batch.set(commentRef, {
+  const commentData: Record<string, unknown> = {
     userId: uid,
-    text: text.trim(),
+    text: trimmedText,
     createdAt: FieldValue.serverTimestamp(),
-  })
+  }
+  if (hasImage) {
+    commentData.imageUrl = imageUrl
+  }
+  const batch = db.batch()
+  batch.set(commentRef, commentData)
   batch.update(betRef, {
     commentCount: FieldValue.increment(1),
     lastCommentAt: FieldValue.serverTimestamp(),

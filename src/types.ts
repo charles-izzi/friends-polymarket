@@ -40,6 +40,7 @@ export interface Comment {
   id: string
   userId: string
   text: string
+  imageUrl?: string
   createdAt: Timestamp
 }
 

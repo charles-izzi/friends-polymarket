@@ -13,6 +13,7 @@ import {
   type MessagePayload,
 } from 'firebase/messaging'
 import { getFunctions, httpsCallable } from 'firebase/functions'
+import { getStorage } from 'firebase/storage'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -33,6 +34,7 @@ export const dbName = useDevDb ? 'staging' : '(default)'
 
 const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
+export const storage = getStorage(app)
 const firestoreSettings = {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
 }

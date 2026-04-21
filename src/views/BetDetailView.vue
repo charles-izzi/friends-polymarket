@@ -136,6 +136,53 @@ let nowInterval: ReturnType<typeof setInterval> | null = null
 
 const newCommentText = ref('')
 const sendBtnRef = ref<ComponentPublicInstance | null>(null)
+const pendingImage = ref<File | null>(null)
+const pendingImagePreview = ref<string | null>(null)
+const imageInputRef = ref<HTMLInputElement | null>(null)
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024
+
+function attachImage(file: File) {
+  if (!file.type.startsWith('image/')) {
+    commentsStore.error = 'Only image files are supported'
+    return
+  }
+  if (file.size > MAX_IMAGE_SIZE) {
+    commentsStore.error = 'Image must be under 5 MB'
+    return
+  }
+  commentsStore.error = ''
+  pendingImage.value = file
+  pendingImagePreview.value = URL.createObjectURL(file)
+}
+
+function removeImage() {
+  if (pendingImagePreview.value) URL.revokeObjectURL(pendingImagePreview.value)
+  pendingImage.value = null
+  pendingImagePreview.value = null
+  if (imageInputRef.value) imageInputRef.value.value = ''
+}
+
+function onImagePicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) attachImage(file)
+}
+
+function onCommentPaste(event: ClipboardEvent) {
+  const items = event.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) {
+        attachImage(file)
+        event.preventDefault()
+      }
+      return
+    }
+  }
+}
 
 const effectiveStatus = computed(() => {
   if (!bet.value) return 'open'
@@ -536,10 +583,12 @@ function commentTimeAgo(ts: import('firebase/firestore').Timestamp): string {
 
 async function handlePostComment() {
   const text = newCommentText.value.trim()
-  if (!text) return
+  const image = pendingImage.value
+  if (!text && !image) return
   try {
-    await commentsStore.addComment(betId.value, text)
+    await commentsStore.addComment(betId.value, text, image)
     newCommentText.value = ''
+    removeImage()
   } catch {
     // error is set in store
   }
@@ -1200,13 +1249,47 @@ onUnmounted(() => {
                       {{ comment.createdAt ? commentTimeAgo(comment.createdAt) : '' }}
                     </span>
                   </div>
-                  <p class="text-body-2 mt-1" style="white-space: pre-wrap; word-break: break-word">
+                  <p
+                    v-if="comment.text"
+                    class="text-body-2 mt-1"
+                    style="white-space: pre-wrap; word-break: break-word"
+                  >
                     {{ comment.text }}
                   </p>
+                  <a
+                    v-if="comment.imageUrl"
+                    :href="comment.imageUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="d-block mt-1"
+                  >
+                    <v-img
+                      :src="comment.imageUrl"
+                      max-height="200"
+                      max-width="300"
+                      rounded="lg"
+                      cover
+                      class="comment-image"
+                    />
+                  </a>
                 </div>
               </div>
             </div>
             <p v-else class="text-body-2 text-medium-emphasis mb-3">No comments yet</p>
+
+            <!-- Image preview -->
+            <div v-if="pendingImagePreview" class="mb-2">
+              <v-chip
+                closable
+                color="primary"
+                variant="tonal"
+                size="small"
+                prepend-icon="mdi-image"
+                @click:close="removeImage()"
+              >
+                {{ pendingImage?.name }}
+              </v-chip>
+            </div>
 
             <div class="d-flex align-center ga-2">
               <v-text-field
@@ -1217,6 +1300,22 @@ onUnmounted(() => {
                 hide-details
                 :maxlength="500"
                 @keydown.enter.prevent="handlePostComment"
+                @paste="onCommentPaste"
+              />
+              <input
+                ref="imageInputRef"
+                type="file"
+                accept="image/*"
+                hidden
+                @change="onImagePicked"
+              />
+              <v-btn
+                icon="mdi-image"
+                :variant="pendingImage ? 'flat' : 'tonal'"
+                :color="pendingImage ? 'primary' : undefined"
+                size="small"
+                :disabled="commentsStore.submitting"
+                @click="imageInputRef?.click()"
               />
               <v-btn
                 ref="sendBtnRef"
@@ -1225,7 +1324,7 @@ onUnmounted(() => {
                 variant="tonal"
                 size="small"
                 :loading="commentsStore.submitting"
-                :disabled="!newCommentText.trim() || commentsStore.submitting"
+                :disabled="(!newCommentText.trim() && !pendingImage) || commentsStore.submitting"
                 @click="handlePostComment"
               />
             </div>
@@ -1542,5 +1641,10 @@ onUnmounted(() => {
   color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   margin: 2px 0 0;
   line-height: 1.2;
+}
+
+.comment-image {
+  cursor: pointer;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 </style>
