@@ -62,7 +62,7 @@ async function navigateToBet(direction: 1 | -1) {
 }
 
 const { swipeDeltaX, resetSwipe } = useSwipe({
-  ignore: '.v-slider-thumb',
+  ignore: '.v-slider-thumb, .holdings-scroll',
   onSwipeLeft: () => navigateToBet(1),
   onSwipeRight: () => navigateToBet(-1),
 })
@@ -136,6 +136,7 @@ let nowInterval: ReturnType<typeof setInterval> | null = null
 
 const newCommentText = ref('')
 const sendBtnRef = ref<ComponentPublicInstance | null>(null)
+const holdingsScrollRef = ref<HTMLElement | null>(null)
 const pendingImage = ref<File | null>(null)
 const pendingImagePreview = ref<string | null>(null)
 const imageInputRef = ref<HTMLInputElement | null>(null)
@@ -594,6 +595,44 @@ async function handlePostComment() {
   }
 }
 
+// Drag-to-scroll for .holdings-scroll (mouse only; touch uses native overflow scroll)
+function initDragScroll(el: HTMLElement) {
+  let isDown = false
+  let startX = 0
+  let scrollLeft = 0
+
+  el.addEventListener('mousedown', (e: MouseEvent) => {
+    // Only left button, and only if content overflows
+    if (e.button !== 0 || el.scrollWidth <= el.clientWidth) return
+    isDown = true
+    startX = e.pageX - el.offsetLeft
+    scrollLeft = el.scrollLeft
+    el.style.cursor = 'grabbing'
+    el.style.userSelect = 'none'
+  })
+
+  el.addEventListener('mouseleave', () => {
+    if (!isDown) return
+    isDown = false
+    el.style.cursor = ''
+    el.style.userSelect = ''
+  })
+
+  el.addEventListener('mouseup', () => {
+    if (!isDown) return
+    isDown = false
+    el.style.cursor = ''
+    el.style.userSelect = ''
+  })
+
+  el.addEventListener('mousemove', (e: MouseEvent) => {
+    if (!isDown) return
+    e.preventDefault()
+    const x = e.pageX - el.offsetLeft
+    el.scrollLeft = scrollLeft - (x - startX)
+  })
+}
+
 function setupBetListeners(id: string) {
   betsStore.listenToBet(id)
   commentsStore.listenToComments(id)
@@ -619,6 +658,11 @@ onMounted(() => {
   nowInterval = setInterval(() => (now.value = Date.now()), 60000)
   window.addEventListener('scroll', updateSendButtonRect, { passive: true, capture: true })
   window.addEventListener('resize', updateSendButtonRect, { passive: true })
+})
+
+// Attach drag-to-scroll when the holdings scroll container mounts
+watch(holdingsScrollRef, (el) => {
+  if (el) initDragScroll(el)
 })
 
 // Re-establish listeners when navigating between bet detail pages
@@ -899,70 +943,72 @@ onUnmounted(() => {
           </v-window-item>
 
           <v-window-item value="holdings">
-            <table
-              v-if="betPositions.length > 0"
-              class="text-body-2"
-              style="width: 100%; border-collapse: collapse"
-            >
-              <thead>
-                <tr
-                  class="text-caption text-medium-emphasis"
-                  style="
-                    border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
-                  "
-                >
-                  <th class="text-left py-1">Player</th>
-                  <th
-                    v-for="(outcome, i) in bet.outcomes"
-                    :key="i"
-                    class="text-center py-1 holdings-th"
+            <div ref="holdingsScrollRef" class="holdings-scroll">
+              <table
+                v-if="betPositions.length > 0"
+                class="text-body-2"
+                style="width: max-content; min-width: 100%; border-collapse: collapse"
+              >
+                <thead>
+                  <tr
+                    class="text-caption text-medium-emphasis"
+                    style="
+                      border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                    "
                   >
-                    <v-menu
-                      open-on-hover
-                      open-on-click
-                      location="top"
-                      :close-on-content-click="false"
+                    <th class="text-left py-1">Player</th>
+                    <th
+                      v-for="(outcome, i) in bet.outcomes"
+                      :key="i"
+                      class="text-center py-1 holdings-th"
                     >
-                      <template #activator="{ props }">
-                        <span
-                          v-bind="props"
-                          class="d-inline-flex align-center ga-1 holdings-th-content"
-                        >
+                      <v-menu
+                        open-on-hover
+                        open-on-click
+                        location="top"
+                        :close-on-content-click="false"
+                      >
+                        <template #activator="{ props }">
                           <span
-                            :style="{
-                              width: '8px',
-                              height: '8px',
-                              borderRadius: '2px',
-                              backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
-                              flexShrink: 0,
-                            }"
-                          />
-                          <span class="text-truncate">{{ outcome }}</span>
-                        </span>
-                      </template>
-                      <v-card class="pa-2 text-caption">{{ outcome }}</v-card>
-                    </v-menu>
-                  </th>
-                  <th class="text-right py-1">Spent</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="pos in betPositions"
-                  :key="pos.userId"
-                  style="
-                    border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
-                  "
-                >
-                  <td class="py-1">{{ memberName(pos.userId) }}</td>
-                  <td v-for="(outcome, i) in bet.outcomes" :key="i" class="text-center py-1">
-                    {{ (pos.shares[i] ?? 0).toFixed(1) }}
-                  </td>
-                  <td class="text-right py-1">${{ pos.totalCost.toFixed(2) }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <p v-else class="text-body-2 text-medium-emphasis">No positions yet</p>
+                            v-bind="props"
+                            class="d-inline-flex align-center ga-1 holdings-th-content"
+                          >
+                            <span
+                              :style="{
+                                width: '8px',
+                                height: '8px',
+                                borderRadius: '2px',
+                                backgroundColor: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+                                flexShrink: 0,
+                              }"
+                            />
+                            <span class="text-truncate">{{ outcome }}</span>
+                          </span>
+                        </template>
+                        <v-card class="pa-2 text-caption">{{ outcome }}</v-card>
+                      </v-menu>
+                    </th>
+                    <th class="text-right py-1">Spent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="pos in betPositions"
+                    :key="pos.userId"
+                    style="
+                      border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
+                    "
+                  >
+                    <td class="py-1">{{ memberName(pos.userId) }}</td>
+                    <td v-for="(outcome, i) in bet.outcomes" :key="i" class="text-center py-1">
+                      {{ (pos.shares[i] ?? 0).toFixed(1) }}
+                    </td>
+                    <td class="text-right py-1">${{ pos.totalCost.toFixed(2) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p v-else class="text-body-2 text-medium-emphasis">No positions yet</p>
+            </div>
           </v-window-item>
         </v-window>
         <!-- Outcome prices -->
@@ -1549,6 +1595,12 @@ onUnmounted(() => {
 .pulse-shadow {
   animation: pulse-glow 1.5s ease-in-out infinite;
   border-radius: 50%;
+}
+
+.holdings-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  cursor: grab;
 }
 
 .holdings-th {
