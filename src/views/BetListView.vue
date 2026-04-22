@@ -102,7 +102,7 @@ const FILTERS_KEY = 'betListFilters'
 const savedFilters = localStorage.getItem(FILTERS_KEY)
 const filters = ref<string[]>(savedFilters ? JSON.parse(savedFilters) : ['open', '!stake'])
 
-const TRISTATE_FILTERS = ['stake', 'creator', 'comments']
+const TRISTATE_FILTERS = ['stake', 'creator', 'comments', 'excluded']
 const STATUS_VALUES = ['open', 'closed', 'resolved', 'cancelled']
 
 function filterState(value: string): 'off' | 'include' | 'exclude' {
@@ -168,8 +168,21 @@ const filteredBets = computed(() => {
         : filterState('comments') === 'include'
           ? (bet.commentCount ?? 0) > 0
           : (bet.commentCount ?? 0) === 0
+    const matchesExcluded =
+      filterState('excluded') === 'off'
+        ? true
+        : filterState('excluded') === 'include'
+          ? (bet.excludedMembers ?? []).includes(authStore.user?.uid ?? '')
+          : !(bet.excludedMembers ?? []).includes(authStore.user?.uid ?? '')
 
-    return matchesStatus && matchesStake && matchesCreator && matchesComments && matchesSearch
+    return (
+      matchesStatus &&
+      matchesStake &&
+      matchesCreator &&
+      matchesComments &&
+      matchesExcluded &&
+      matchesSearch
+    )
   })
 })
 
@@ -220,6 +233,7 @@ const sortedBets = computed(() => {
           { value: 'stake', label: 'My Stakes', icon: 'mdi-circle-multiple' },
           { value: 'creator', label: 'Created by Me', icon: 'mdi-gavel' },
           { value: 'comments', label: 'Has Comments', icon: 'mdi-message-text' },
+          { value: 'excluded', label: 'I\'m Excluded', icon: 'mdi-account-off' },
         ]"
         :key="filter.value"
         :prepend-icon="filter.icon"
@@ -366,6 +380,22 @@ const sortedBets = computed(() => {
                   icon="mdi-gavel"
                   size="small"
                   color="info"
+                  class="ml-2 mt-1"
+                  @click.stop
+                />
+              </template>
+            </v-tooltip>
+            <v-tooltip
+              v-if="(bet.excludedMembers ?? []).includes(authStore.user?.uid ?? '')"
+              text="You're excluded from this bet"
+              location="top"
+            >
+              <template #activator="{ props }">
+                <v-icon
+                  v-bind="props"
+                  icon="mdi-account-off"
+                  size="small"
+                  color="error"
                   class="ml-2 mt-1"
                   @click.stop
                 />

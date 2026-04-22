@@ -82,8 +82,21 @@ export function useFilteredBets() {
           : filterState(filters, 'comments') === 'include'
             ? (bet.commentCount ?? 0) > 0
             : (bet.commentCount ?? 0) === 0
+      const matchesExcluded =
+        filterState(filters, 'excluded') === 'off'
+          ? true
+          : filterState(filters, 'excluded') === 'include'
+            ? (bet.excludedMembers ?? []).includes(authStore.user?.uid ?? '')
+            : !(bet.excludedMembers ?? []).includes(authStore.user?.uid ?? '')
 
-      return matchesStatus && matchesStake && matchesCreator && matchesComments && matchesSearch
+      return (
+        matchesStatus &&
+        matchesStake &&
+        matchesCreator &&
+        matchesComments &&
+        matchesExcluded &&
+        matchesSearch
+      )
     })
 
     return [...filtered].sort((a, b) => {
