@@ -3,7 +3,7 @@
  * Client-side mirror for display only — never trust for real trades.
  */
 
-const B_MIN = 10
+const B_MIN = 60
 const VOLUME_THRESHOLD = 200
 
 /**
@@ -50,4 +50,15 @@ export function calcCost(
   const newSharesSold = [...sharesSold]
   newSharesSold[outcomeIndex] = (newSharesSold[outcomeIndex] ?? 0) + numShares
   return costFunction(newSharesSold, b) - costFunction(sharesSold, b)
+}
+
+/**
+ * Rescale sharesSold so that prices are preserved when b changes.
+ * q_new[i] = q_old[i] * (bNew / bOld)
+ * This ensures calcPrices(q_new, bNew) === calcPrices(q_old, bOld).
+ */
+export function rescaleShares(sharesSold: number[], bOld: number, bNew: number): number[] {
+  if (bOld === bNew) return [...sharesSold]
+  const scale = bNew / bOld
+  return sharesSold.map((q) => q * scale)
 }

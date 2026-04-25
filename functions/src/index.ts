@@ -5,7 +5,7 @@ import { initializeApp } from 'firebase-admin/app'
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getMessaging } from 'firebase-admin/messaging'
 import * as crypto from 'crypto'
-import { calcCost, calcPrices, calcEffectiveB } from './lmsr'
+import { calcCost, calcPrices, calcEffectiveB, rescaleShares } from './lmsr'
 
 // ---------- Stats types (mirrored from src/types.ts) ----------
 interface ResolvedBetRecord {
@@ -517,7 +517,7 @@ export const executeTrade = onCall(async (request) => {
     const sharesSold: number[] = bet.sharesSold
     const totalVolume: number = bet.totalVolume ?? 0
     const bMax: number = bet.liquidityParam
-    const b = calcEffectiveB(totalVolume, bMax)
+    const bBefore = calcEffectiveB(totalVolume, bMax)
 
     // Get current position
     const position = positionSnap.exists
@@ -546,13 +546,15 @@ export const executeTrade = onCall(async (request) => {
       }
     }
 
-    // Calculate cost via LMSR
-    const cost = calcCost(sharesSold, outcomeIndex, shares, b)
+    // Calculate cost via LMSR at the current b
+    const cost = calcCost(sharesSold, outcomeIndex, shares, bBefore)
 
-    // Update bet sharesSold and totalVolume
-    const newSharesSold = [...sharesSold]
-    newSharesSold[outcomeIndex] = (newSharesSold[outcomeIndex] ?? 0) + shares
+    // Compute post-trade sharesSold, then rescale to preserve prices under the new b
+    const postTradeShares = [...sharesSold]
+    postTradeShares[outcomeIndex] = (postTradeShares[outcomeIndex] ?? 0) + shares
     const newTotalVolume = totalVolume + Math.abs(shares)
+    const bAfter = calcEffectiveB(newTotalVolume, bMax)
+    const newSharesSold = rescaleShares(postTradeShares, bBefore, bAfter)
     txn.update(betRef, { sharesSold: newSharesSold, totalVolume: newTotalVolume })
 
     // Update member balance
@@ -567,8 +569,7 @@ export const executeTrade = onCall(async (request) => {
       totalCost: position.totalCost + cost,
     })
 
-    // Record trade — compute priceAfter with the NEW effective b
-    const bAfter = calcEffectiveB(newTotalVolume, bMax)
+    // Record trade — priceAfter uses the rescaled shares with bAfter
     const priceAfter = calcPrices(newSharesSold, bAfter)
     const tradeRef = betRef.collection('trades').doc()
     txn.set(tradeRef, {

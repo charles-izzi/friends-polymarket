@@ -9,7 +9,7 @@ import { useBetsStore } from '@/stores/bets'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
 import { useCommentsStore } from '@/stores/comments'
-import { calcCost, calcEffectiveB, calcPrices } from '@/utils/lmsr'
+import { calcCost, calcEffectiveB, calcPrices, rescaleShares } from '@/utils/lmsr'
 import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
 
@@ -276,10 +276,13 @@ watch(
 // Compute cost for each changed outcome
 const tradeCosts = computed(() => {
   if (!bet.value) return []
-  const b = calcEffectiveB(bet.value.totalVolume ?? 0, bet.value.liquidityParam)
+  const totalVolume = bet.value.totalVolume ?? 0
+  const bMax = bet.value.liquidityParam
+  const bBefore = calcEffectiveB(totalVolume, bMax)
+  // Cost is computed at the current b (before the trade), matching server behavior
   return tradeDiffs.value.map((diff, i) => {
     if (diff === 0) return 0
-    return calcCost(bet.value!.sharesSold, i, diff, b)
+    return calcCost(bet.value!.sharesSold, i, diff, bBefore)
   })
 })
 
@@ -287,15 +290,20 @@ const totalCost = computed(() => tradeCosts.value.reduce((sum, c) => sum + c, 0)
 
 const projectedPrices = computed(() => {
   if (!bet.value || !hasPendingTrades.value) return prices.value
-  const newSharesSold = [...bet.value.sharesSold]
-  let projectedVolume = bet.value.totalVolume ?? 0
+  const totalVolume = bet.value.totalVolume ?? 0
+  const bMax = bet.value.liquidityParam
+  const bBefore = calcEffectiveB(totalVolume, bMax)
+  // Build post-trade shares at current b, then rescale to bAfter for display
+  const postTradeShares = [...bet.value.sharesSold]
+  let projectedVolume = totalVolume
   for (let i = 0; i < tradeDiffs.value.length; i++) {
     const diff = tradeDiffs.value[i] ?? 0
-    newSharesSold[i] = (newSharesSold[i] ?? 0) + diff
+    postTradeShares[i] = (postTradeShares[i] ?? 0) + diff
     projectedVolume += Math.abs(diff)
   }
-  const b = calcEffectiveB(projectedVolume, bet.value.liquidityParam)
-  return calcPrices(newSharesSold, b)
+  const bAfter = calcEffectiveB(projectedVolume, bMax)
+  const rescaled = rescaleShares(postTradeShares, bBefore, bAfter)
+  return calcPrices(rescaled, bAfter)
 })
 
 const holdingsNetCost = computed(() => position.value?.totalCost ?? 0)
