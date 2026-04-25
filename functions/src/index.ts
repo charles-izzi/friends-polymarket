@@ -420,6 +420,7 @@ export const createBet = onCall(async (request) => {
     liquidityParam,
     sharesSold: new Array(outcomes.length).fill(0),
     totalVolume: 0,
+    lastTradeAt: null,
   })
 
   // Send push notifications to all market members except creator and excluded
@@ -555,7 +556,11 @@ export const executeTrade = onCall(async (request) => {
     const newTotalVolume = totalVolume + Math.abs(shares)
     const bAfter = calcEffectiveB(newTotalVolume, bMax)
     const newSharesSold = rescaleShares(postTradeShares, bBefore, bAfter)
-    txn.update(betRef, { sharesSold: newSharesSold, totalVolume: newTotalVolume })
+    txn.update(betRef, {
+      sharesSold: newSharesSold,
+      totalVolume: newTotalVolume,
+      lastTradeAt: FieldValue.serverTimestamp(),
+    })
 
     // Update member balance
     txn.update(memberRef, { balance: member.balance - cost })

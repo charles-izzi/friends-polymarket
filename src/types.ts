@@ -33,6 +33,7 @@ export interface Bet {
   liquidityParam: number
   sharesSold: number[]
   totalVolume: number
+  lastTradeAt: Timestamp | null
   commentCount: number
   lastCommentAt: Timestamp | null
 }

@@ -54,10 +54,20 @@ const inviteUrl = computed(() => {
   return `${window.location.origin}/invite/${code}`
 })
 
+function hotScore(bet: Bet): number {
+  const volume = bet.totalVolume ?? 0
+  if (volume === 0) return 0
+  const lastTrade = bet.lastTradeAt?.toDate().getTime() ?? bet.createdAt.toDate().getTime()
+  const ageDays = Math.max(0, (now.value - lastTrade) / 86_400_000)
+  // Half-life of 7 days: volume weight halves every 7 days of inactivity
+  const decay = Math.pow(0.5, ageDays / 7)
+  return volume * decay
+}
+
 const topBets = computed(() =>
   [...betsStore.bets]
     .filter((b) => effectiveStatus(b) === 'open')
-    .sort((a, b) => (b.totalVolume ?? 0) - (a.totalVolume ?? 0))
+    .sort((a, b) => hotScore(b) - hotScore(a))
     .slice(0, 3),
 )
 
