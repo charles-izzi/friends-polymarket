@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed } from 'vue'
+import { onMounted, onUnmounted, computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useSmartBack } from '@/composables/useSmartBack'
 import { useStatsStore } from '@/stores/stats'
@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useBetsStore } from '@/stores/bets'
 import SvgLineChart from '@/components/SvgLineChart.vue'
 import type { ChartSeries } from '@/components/SvgLineChart.vue'
+import type { UserStats } from '@/types'
 
 const router = useRouter()
 const route = useRoute()
@@ -27,7 +28,12 @@ const playerName = computed(() => {
 
 onMounted(() => {
   statsStore.listenToStats(targetUserId.value)
+  statsStore.loadAllStats()
   betsStore.listenToBets()
+})
+
+watch(targetUserId, (newId) => {
+  statsStore.listenToStats(newId)
 })
 
 onUnmounted(() => {
@@ -111,6 +117,111 @@ const currentHoldings = computed(() => {
     }
   }
   return holdings
+})
+
+// --- Leaderboard ---
+type StatKey =
+  | 'winRate'
+  | 'totalBets'
+  | 'streak'
+  | 'avgBet'
+  | 'favoriteRate'
+  | 'totalPnL'
+  | 'accuracy'
+
+const leaderboardStat = ref<StatKey | null>(null)
+
+const statLabels: Record<StatKey, string> = {
+  winRate: 'Win Rate',
+  totalBets: 'Total Bets',
+  streak: 'Streak',
+  avgBet: 'Avg Bet',
+  favoriteRate: 'Favorite %',
+  totalPnL: 'Total P&L',
+  accuracy: 'Accuracy',
+}
+
+interface LeaderboardEntry {
+  userId: string
+  name: string
+  value: number
+  formatted: string
+  isCurrentUser: boolean
+}
+
+function getStatValue(s: UserStats, key: StatKey): number {
+  switch (key) {
+    case 'winRate':
+      return s.totalResolved > 0 ? s.wins / s.totalResolved : 0
+    case 'totalBets':
+      return s.totalResolved
+    case 'streak':
+      return s.currentStreak.type === 'win' ? s.currentStreak.count : -s.currentStreak.count
+    case 'avgBet':
+      return s.avgBetSize
+    case 'favoriteRate':
+      return s.favoriteRate
+    case 'totalPnL':
+      return s.totalProfit
+    case 'accuracy':
+      return s.totalResolved > 0 ? s.totalProfit / s.totalResolved : 0
+  }
+}
+
+function formatStatValue(v: number, key: StatKey): string {
+  switch (key) {
+    case 'winRate':
+      return fmtPct(v)
+    case 'totalBets':
+      return String(v)
+    case 'streak':
+      return v >= 0 ? `${v}W` : `${Math.abs(v)}L`
+    case 'avgBet':
+      return `$${v.toFixed(0)}`
+    case 'favoriteRate':
+      return fmtPct(v)
+    case 'totalPnL':
+      return fmtDollars(v)
+    case 'accuracy':
+      return fmtDollars(v)
+  }
+}
+
+const leaderboard = computed<LeaderboardEntry[]>(() => {
+  const key = leaderboardStat.value
+  if (!key) return []
+  const allStats = statsStore.allMemberStats
+  const entries: LeaderboardEntry[] = []
+  for (const [userId, s] of Object.entries(allStats)) {
+    if (s.totalResolved === 0) continue
+    const member = marketStore.members.find((m) => m.userId === userId)
+    const val = getStatValue(s, key)
+    entries.push({
+      userId,
+      name: member?.displayName ?? userId.slice(0, 8),
+      value: val,
+      formatted: formatStatValue(val, key),
+      isCurrentUser: userId === targetUserId.value,
+    })
+  }
+  entries.sort((a, b) => b.value - a.value)
+  return entries
+})
+
+function openLeaderboard(key: StatKey) {
+  leaderboardStat.value = key
+}
+
+function goToUserStats(userId: string) {
+  router.push(`/${marketStore.market!.id}/stats/${userId}`)
+  showLeaderboard.value = false
+}
+
+const showLeaderboard = computed({
+  get: () => leaderboardStat.value !== null,
+  set: (v: boolean) => {
+    if (!v) leaderboardStat.value = null
+  },
 })
 
 // --- Formatters ---
@@ -260,10 +371,15 @@ function fmtPct(v: number): string {
         <v-row dense class="mb-4">
           <!-- Win Rate -->
           <v-col cols="6" sm="3">
-            <v-card variant="outlined" class="pa-3 text-center" style="height: 100%">
+            <v-card
+              variant="outlined"
+              class="pa-3 text-center stat-card"
+              style="height: 100%"
+              @click="openLeaderboard('winRate')"
+            >
               <div class="d-flex align-center justify-center">
                 <span class="text-caption text-medium-emphasis">Win Rate</span>
-                <v-btn icon size="x-small" variant="text" class="ml-1">
+                <v-btn icon size="x-small" variant="text" class="ml-1" @click.stop>
                   <v-icon size="14">mdi-information-outline</v-icon>
                   <v-tooltip activator="parent" location="top">
                     Percentage of resolved bets where you earned a profit
@@ -278,10 +394,15 @@ function fmtPct(v: number): string {
 
           <!-- Total Bets -->
           <v-col cols="6" sm="3">
-            <v-card variant="outlined" class="pa-3 text-center" style="height: 100%">
+            <v-card
+              variant="outlined"
+              class="pa-3 text-center stat-card"
+              style="height: 100%"
+              @click="openLeaderboard('totalBets')"
+            >
               <div class="d-flex align-center justify-center">
                 <span class="text-caption text-medium-emphasis">Total Bets</span>
-                <v-btn icon size="x-small" variant="text" class="ml-1">
+                <v-btn icon size="x-small" variant="text" class="ml-1" @click.stop>
                   <v-icon size="14">mdi-information-outline</v-icon>
                   <v-tooltip activator="parent" location="top">
                     Number of resolved bets you participated in
@@ -294,10 +415,15 @@ function fmtPct(v: number): string {
 
           <!-- Current Streak -->
           <v-col cols="6" sm="3">
-            <v-card variant="outlined" class="pa-3 text-center" style="height: 100%">
+            <v-card
+              variant="outlined"
+              class="pa-3 text-center stat-card"
+              style="height: 100%"
+              @click="openLeaderboard('streak')"
+            >
               <div class="d-flex align-center justify-center">
                 <span class="text-caption text-medium-emphasis">Streak</span>
-                <v-btn icon size="x-small" variant="text" class="ml-1">
+                <v-btn icon size="x-small" variant="text" class="ml-1" @click.stop>
                   <v-icon size="14">mdi-information-outline</v-icon>
                   <v-tooltip activator="parent" location="top">
                     Your current consecutive winning or losing streak
@@ -316,10 +442,15 @@ function fmtPct(v: number): string {
 
           <!-- Average Bet Size -->
           <v-col cols="6" sm="3">
-            <v-card variant="outlined" class="pa-3 text-center" style="height: 100%">
+            <v-card
+              variant="outlined"
+              class="pa-3 text-center stat-card"
+              style="height: 100%"
+              @click="openLeaderboard('avgBet')"
+            >
               <div class="d-flex align-center justify-center">
                 <span class="text-caption text-medium-emphasis">Avg Bet</span>
-                <v-btn icon size="x-small" variant="text" class="ml-1">
+                <v-btn icon size="x-small" variant="text" class="ml-1" @click.stop>
                   <v-icon size="14">mdi-information-outline</v-icon>
                   <v-tooltip activator="parent" location="top">
                     Average amount wagered per bet
@@ -332,10 +463,15 @@ function fmtPct(v: number): string {
 
           <!-- Favorite Outcome Rate -->
           <v-col cols="6" sm="3">
-            <v-card variant="outlined" class="pa-3 text-center" style="height: 100%">
+            <v-card
+              variant="outlined"
+              class="pa-3 text-center stat-card"
+              style="height: 100%"
+              @click="openLeaderboard('favoriteRate')"
+            >
               <div class="d-flex align-center justify-center">
                 <span class="text-caption text-medium-emphasis">Favorite %</span>
-                <v-btn icon size="x-small" variant="text" class="ml-1">
+                <v-btn icon size="x-small" variant="text" class="ml-1" @click.stop>
                   <v-icon size="14">mdi-information-outline</v-icon>
                   <v-tooltip activator="parent" location="top">
                     How often you bet on the most popular outcome at time of entry
@@ -350,10 +486,15 @@ function fmtPct(v: number): string {
 
           <!-- Total Profit -->
           <v-col cols="6" sm="3">
-            <v-card variant="outlined" class="pa-3 text-center" style="height: 100%">
+            <v-card
+              variant="outlined"
+              class="pa-3 text-center stat-card"
+              style="height: 100%"
+              @click="openLeaderboard('totalPnL')"
+            >
               <div class="d-flex align-center justify-center">
                 <span class="text-caption text-medium-emphasis">Total P&amp;L</span>
-                <v-btn icon size="x-small" variant="text" class="ml-1">
+                <v-btn icon size="x-small" variant="text" class="ml-1" @click.stop>
                   <v-icon size="14">mdi-information-outline</v-icon>
                   <v-tooltip activator="parent" location="top">
                     Your total profit or loss across all resolved bets
@@ -371,10 +512,15 @@ function fmtPct(v: number): string {
 
           <!-- Accuracy (Avg P/L per bet) -->
           <v-col cols="6" sm="3">
-            <v-card variant="outlined" class="pa-3 text-center" style="height: 100%">
+            <v-card
+              variant="outlined"
+              class="pa-3 text-center stat-card"
+              style="height: 100%"
+              @click="openLeaderboard('accuracy')"
+            >
               <div class="d-flex align-center justify-center">
                 <span class="text-caption text-medium-emphasis">Accuracy</span>
-                <v-btn icon size="x-small" variant="text" class="ml-1">
+                <v-btn icon size="x-small" variant="text" class="ml-1" @click.stop>
                   <v-icon size="14">mdi-information-outline</v-icon>
                   <v-tooltip activator="parent" location="top">
                     Average profit or loss per resolved bet
@@ -428,7 +574,10 @@ function fmtPct(v: number): string {
               </v-btn>
             </div>
             <p class="text-body-2 mt-1">{{ stats!.worstBet.question }}</p>
-            <p class="text-body-2 font-weight-bold text-error">
+            <p
+              class="text-body-2 font-weight-bold"
+              :class="stats!.worstBet.profit >= 0 ? 'text-success' : 'text-error'"
+            >
               {{ fmtDollars(stats!.worstBet.profit) }}
             </p>
           </v-card>
@@ -458,6 +607,48 @@ function fmtPct(v: number): string {
         </div>
       </template>
     </template>
+    <!-- Leaderboard Dialog -->
+    <v-dialog v-model="showLeaderboard" max-width="360" :scrim="true">
+      <v-card v-if="leaderboardStat">
+        <v-card-title class="d-flex align-center">
+          <v-icon size="20" class="mr-2">mdi-podium</v-icon>
+          {{ statLabels[leaderboardStat] }}
+          <v-spacer />
+          <v-btn icon size="small" variant="text" @click="showLeaderboard = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-divider />
+        <v-list density="compact">
+          <v-list-item
+            v-for="(entry, idx) in leaderboard"
+            :key="entry.userId"
+            :class="{ 'bg-surface-variant': entry.isCurrentUser }"
+            @click="goToUserStats(entry.userId)"
+          >
+            <template #prepend>
+              <span
+                class="text-body-2 font-weight-bold mr-3"
+                style="min-width: 24px; text-align: right"
+              >
+                {{ idx + 1 }}
+              </span>
+            </template>
+            <v-list-item-title class="text-body-2">
+              {{ entry.name }}
+            </v-list-item-title>
+            <template #append>
+              <span class="text-body-2 font-weight-medium">{{ entry.formatted }}</span>
+            </template>
+          </v-list-item>
+          <v-list-item v-if="leaderboard.length === 0">
+            <v-list-item-title class="text-body-2 text-medium-emphasis text-center">
+              No data yet
+            </v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -466,6 +657,22 @@ function fmtPct(v: number): string {
   cursor: pointer;
 }
 .clickable-row:hover {
+  background: rgba(var(--v-theme-on-surface), 0.04);
+}
+.stat-card {
+  cursor: pointer;
+  position: relative;
+}
+.stat-card::after {
+  content: '\F0D25';
+  font-family: 'Material Design Icons';
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  font-size: 12px;
+  opacity: 0.25;
+}
+.stat-card:hover {
   background: rgba(var(--v-theme-on-surface), 0.04);
 }
 .line-clamp-2 {
