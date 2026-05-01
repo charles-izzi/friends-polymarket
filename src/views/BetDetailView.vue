@@ -396,6 +396,14 @@ function memberName(userId: string): string {
   return marketStore.members.find((m) => m.userId === userId)?.displayName ?? 'Unknown'
 }
 
+function fmtTradeTime(ts: { seconds: number } | number): string {
+  const ms = typeof ts === 'number' ? ts : ts.seconds * 1000
+  const d = new Date(ms)
+  const date = d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  return `${date} ${time}`
+}
+
 async function handleTrades() {
   if (!hasPendingTrades.value || submitting.value) return
   submitting.value = true
@@ -960,10 +968,10 @@ onUnmounted(() => {
                     border-bottom: thin solid rgba(var(--v-border-color), var(--v-border-opacity));
                   "
                 >
-                  <th class="text-left py-1" style="width: 25%">Player</th>
-                  <th class="text-left py-1">Action</th>
-                  <th class="text-right py-1" style="width: 18%">Shares</th>
-                  <th class="text-right py-1" style="width: 20%">Amount</th>
+                  <th class="text-left py-1" style="width: 22%">Player</th>
+                  <th class="text-left py-1" style="max-width: 30%">Action</th>
+                  <th class="text-left py-1" style="width: 22%">Shares</th>
+                  <th class="text-right py-1" style="width: 26%">Time <v-icon size="12">mdi-arrow-down</v-icon></th>
                 </tr>
               </thead>
               <tbody>
@@ -1012,8 +1020,10 @@ onUnmounted(() => {
                       </v-card>
                     </v-menu>
                   </td>
-                  <td class="text-right py-1">{{ Math.abs(trade.shares).toFixed(1) }}</td>
-                  <td class="text-right py-1">${{ Math.abs(trade.cost).toFixed(2) }}</td>
+                  <td class="text-left py-1">
+                    {{ Math.abs(trade.shares).toFixed(0) }}<br>@${{ Math.abs(trade.cost).toFixed(2) }}
+                  </td>
+                  <td class="text-right py-1">{{ fmtTradeTime(trade.createdAt) }}</td>
                 </tr>
               </tbody>
             </table>
