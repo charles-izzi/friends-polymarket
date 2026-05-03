@@ -8,8 +8,9 @@ import * as crypto from 'crypto'
 import { calcCost, calcPrices, calcEffectiveB, rescaleShares, calcSplitScore } from './lmsr'
 
 // ---------- Commission ----------
-// Creator earns a commission on resolution = totalVolume * rate * splitScore
+// Creator earns a commission on resolution: each winner pays winningShares * rate * splitScore
 // splitScore = normalized entropy of final prices (1 = max disagreement, 0 = consensus)
+// Max per user = 100 shares * 0.02 * 1.0 = $2.00 (naturally bounded, no cap needed)
 const CREATOR_COMMISSION_RATE = 0.02
 
 // ---------- Stats types (mirrored from src/types.ts) ----------
@@ -787,7 +788,8 @@ export const resolveBet = onCall(async (request) => {
 
     // ---- All reads complete — now perform writes ----
 
-    // Calculate creator commission based on volume and how divided the group was
+    // Calculate creator commission based on how divided the group was
+    // Each winner pays: winningShares × rate × splitScore
     // Only applies to bets created with commission enabled
     const commissionEnabled = bet.commissionEnabled === true
     const sharesSold: number[] = bet.sharesSold
@@ -796,33 +798,36 @@ export const resolveBet = onCall(async (request) => {
     const bEff = calcEffectiveB(totalVolume, bMax)
     const finalPrices = calcPrices(sharesSold, bEff)
     const splitScore = commissionEnabled ? calcSplitScore(finalPrices) : 0
-    const rawCommission = commissionEnabled ? totalVolume * CREATOR_COMMISSION_RATE * splitScore : 0
+    const feeRate = CREATOR_COMMISSION_RATE * splitScore
 
-    // Total winning shares determines per-share deduction
-    const totalWinningShares = stakedUsers.reduce((sum, u) => sum + u.payout, 0)
-    // Commission can't exceed total payout pool
-    const commission = Math.min(rawCommission, totalWinningShares * 0.5)
-    const commissionPerShare = totalWinningShares > 0 ? commission / totalWinningShares : 0
+    // Per-user fee: winningShares × rate × splitScore
+    const userFeeMap = new Map<string, number>()
+    let commission = 0
+    for (const user of stakedUsers) {
+      if (user.payout > 0) {
+        const fee = user.payout * feeRate
+        userFeeMap.set(user.userId, fee)
+        commission += fee
+      }
+    }
 
-    // Adjust winner payouts: deduct commission proportionally
+    // Adjust winner payouts: deduct each user's fee
     for (const wu of winnerUpdates) {
-      const originalCredit = wu.balanceCredit
-      // balanceCredit includes refund — only deduct commission from winning-shares portion
-      // Find the staked user record to separate payout from refund
       const userId = wu.memberRef.id
-      const staked = stakedUsers.find((s) => s.userId === userId)
-      const winningShares = staked?.payout ?? 0
-      const deduction = winningShares * commissionPerShare
-      wu.balanceCredit = originalCredit - deduction
+      const fee = userFeeMap.get(userId) ?? 0
+      wu.balanceCredit = wu.balanceCredit - fee
     }
 
     // Also adjust stakedUsers payout for accurate stats/notifications
     for (const user of stakedUsers) {
       if (user.payout > 0) {
-        const deduction = user.payout * commissionPerShare
-        user.payout = user.payout - deduction
+        const fee = userFeeMap.get(user.userId) ?? 0
+        user.payout = user.payout - fee
       }
     }
+
+    // Store feeRate for client display (rate × splitScore, client multiplies by their shares)
+    const commissionPerShare = feeRate
 
     txn.update(betRef, {
       status: 'resolved',
