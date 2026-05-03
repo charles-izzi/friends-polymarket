@@ -199,6 +199,15 @@ export const useBetsStore = defineStore('bets', () => {
               body: `Cost: $${myPos.totalCost.toFixed(2)} · Payout: $${payout.toFixed(2)} · Profit: ${profitStr}${refundStr}`,
             })
           }
+          // Notify creator about commission earned (separate from position notification)
+          if (bet.createdBy === uid && bet.creatorCommission && bet.creatorCommission > 0) {
+            notificationsStore.push({
+              type: 'bet_resolved',
+              betId: bet.id,
+              title: `Commission earned!`,
+              body: `You earned +$${bet.creatorCommission.toFixed(2)} for creating "${bet.question}"`,
+            })
+          }
         } else if (bet.status === 'cancelled' && !selfActedBetIds.has(bet.id)) {
           const positions = allPositions.value[bet.id]
           const myPos = positions?.find((p) => p.userId === uid)

@@ -223,6 +223,30 @@ const myInvalidatedShares = computed(() => {
     .reduce((sum, t) => sum + t.shares, 0)
 })
 
+const myCommissionFee = computed(() => {
+  if (!bet.value || !position.value || bet.value.resolvedOutcome === null) return 0
+  const winningShares =
+    (position.value.shares[bet.value.resolvedOutcome] ?? 0) - myInvalidatedShares.value
+  if (winningShares <= 0) return 0
+  return winningShares * (bet.value.commissionPerShare ?? 0)
+})
+
+const myNetCommission = computed(() => {
+  if (!bet.value || !isCreator.value) return 0
+  return (bet.value.creatorCommission ?? 0) - myCommissionFee.value
+})
+
+const myResolvedProfit = computed(() => {
+  if (!bet.value || !position.value || bet.value.resolvedOutcome === null) return 0
+  const payout = (position.value.shares[bet.value.resolvedOutcome] ?? 0) - myInvalidatedShares.value
+  const cost = position.value.totalCost - myInvalidatedCost.value
+  if (isCreator.value) {
+    // Creator pays fee on own shares but receives full commission
+    return payout - myCommissionFee.value + (bet.value.creatorCommission ?? 0) - cost
+  }
+  return payout - myCommissionFee.value - cost
+})
+
 const creatorAwaitingFirstWager = computed(
   () => isCreator.value && bet.value?.totalVolume === 0 && effectiveStatus.value === 'open',
 )
@@ -400,7 +424,11 @@ function fmtTradeTime(ts: { seconds: number } | number): string {
   const ms = typeof ts === 'number' ? ts : ts.seconds * 1000
   const d = new Date(ms)
   const date = d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  const time = d.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
   return `${date} ${time}`
 }
 
@@ -876,33 +904,48 @@ onUnmounted(() => {
                   }}
                 </td>
               </tr>
+              <tr v-if="!isCreator && myCommissionFee > 0">
+                <td class="pr-4 text-medium-emphasis">
+                  <span class="d-inline-flex align-center">
+                    Creator fee
+                    <v-btn icon size="x-small" variant="text" class="ml-1">
+                      <v-icon size="14">mdi-information-outline</v-icon>
+                      <v-tooltip activator="parent" location="top" max-width="280">
+                        A small fee paid to the bet creator for making a bet that divided the group.
+                        Higher disagreement = higher fee.
+                      </v-tooltip>
+                    </v-btn>
+                  </span>
+                </td>
+                <td class="text-right text-error">-${{ myCommissionFee.toFixed(2) }}</td>
+              </tr>
+              <tr v-if="isCreator && myNetCommission !== 0">
+                <td class="pr-4 text-medium-emphasis">
+                  <span class="d-inline-flex align-center">
+                    Commission
+                    <v-btn icon size="x-small" variant="text" class="ml-1">
+                      <v-icon size="14">mdi-information-outline</v-icon>
+                      <v-tooltip activator="parent" location="top" max-width="280">
+                        You earn a commission for creating bets that divided the group. This is the
+                        net amount after deducting the fee on your own winnings.
+                      </v-tooltip>
+                    </v-btn>
+                  </span>
+                </td>
+                <td
+                  class="text-right"
+                  :class="myNetCommission >= 0 ? 'text-success' : 'text-error'"
+                >
+                  {{ myNetCommission >= 0 ? '+' : '-' }}${{ Math.abs(myNetCommission).toFixed(2) }}
+                </td>
+              </tr>
               <tr>
                 <td class="pr-4 text-medium-emphasis font-weight-bold">Profit</td>
                 <td
                   class="text-right font-weight-bold"
-                  :class="
-                    (position.shares[bet.resolvedOutcome] ?? 0) -
-                      myInvalidatedShares -
-                      (position.totalCost - myInvalidatedCost) >=
-                    0
-                      ? 'text-success'
-                      : 'text-error'
-                  "
+                  :class="myResolvedProfit >= 0 ? 'text-success' : 'text-error'"
                 >
-                  {{
-                    (position.shares[bet.resolvedOutcome] ?? 0) -
-                      myInvalidatedShares -
-                      (position.totalCost - myInvalidatedCost) >=
-                    0
-                      ? '+'
-                      : ''
-                  }}${{
-                    (
-                      (position.shares[bet.resolvedOutcome] ?? 0) -
-                      myInvalidatedShares -
-                      (position.totalCost - myInvalidatedCost)
-                    ).toFixed(2)
-                  }}
+                  {{ myResolvedProfit >= 0 ? '+' : '' }}${{ myResolvedProfit.toFixed(2) }}
                 </td>
               </tr>
               <tr v-if="myInvalidatedCost > 0">
@@ -911,6 +954,26 @@ onUnmounted(() => {
               </tr>
             </tbody>
           </table>
+          <div
+            v-if="
+              isCreator &&
+              (!position || position.totalCost <= 0) &&
+              bet.creatorCommission &&
+              bet.creatorCommission > 0
+            "
+            class="text-body-2 mt-2 d-flex align-center"
+          >
+            <span class="text-success font-weight-medium">
+              Commission earned: +${{ bet.creatorCommission.toFixed(2) }}
+            </span>
+            <v-btn icon size="x-small" variant="text" class="ml-1">
+              <v-icon size="14">mdi-information-outline</v-icon>
+              <v-tooltip activator="parent" location="top" max-width="280">
+                You earn a commission for creating bets that divided the group. Higher disagreement
+                = higher payout.
+              </v-tooltip>
+            </v-btn>
+          </div>
           <div v-if="bet.resolvesAt && myInvalidatedCost > 0" class="text-body-2 mt-2">
             Trades after {{ bet.resolvesAt.toDate().toLocaleString() }} were refunded.
           </div>
@@ -971,7 +1034,9 @@ onUnmounted(() => {
                   <th class="text-left py-1" style="width: 22%">Player</th>
                   <th class="text-left py-1" style="max-width: 30%">Action</th>
                   <th class="text-left py-1" style="width: 22%">Shares</th>
-                  <th class="text-right py-1" style="width: 26%">Time <v-icon size="12">mdi-arrow-down</v-icon></th>
+                  <th class="text-right py-1" style="width: 26%">
+                    Time <v-icon size="12">mdi-arrow-down</v-icon>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1021,7 +1086,9 @@ onUnmounted(() => {
                     </v-menu>
                   </td>
                   <td class="text-left py-1">
-                    {{ Math.abs(trade.shares).toFixed(0) }}<br>@${{ Math.abs(trade.cost).toFixed(2) }}
+                    {{ Math.abs(trade.shares).toFixed(0) }}<br />@${{
+                      Math.abs(trade.cost).toFixed(2)
+                    }}
                   </td>
                   <td class="text-right py-1">{{ fmtTradeTime(trade.createdAt) }}</td>
                 </tr>

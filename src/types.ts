@@ -36,6 +36,9 @@ export interface Bet {
   lastTradeAt: Timestamp | null
   commentCount: number
   lastCommentAt: Timestamp | null
+  creatorCommission?: number
+  commissionPerShare?: number
+  splitScore?: number
 }
 
 export interface Comment {

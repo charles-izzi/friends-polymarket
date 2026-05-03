@@ -61,3 +61,21 @@ export function rescaleShares(sharesSold: number[], bOld: number, bNew: number):
   const scale = bNew / bOld
   return sharesSold.map((q) => q * scale)
 }
+
+/**
+ * Split score: normalized entropy of the final price distribution.
+ * Returns 1.0 when outcomes are perfectly split (max disagreement),
+ * approaches 0 when one outcome dominates (consensus).
+ * For binary: equivalent to 4*p*(1-p) scaled to [0,1].
+ */
+export function calcSplitScore(prices: number[]): number {
+  if (prices.length <= 1) return 0
+  const maxEntropy = Math.log(prices.length)
+  let entropy = 0
+  for (const p of prices) {
+    if (p > 0) entropy -= p * Math.log(p)
+  }
+  const raw = entropy / maxEntropy
+  // Cube to make the curve drop off faster for lopsided bets
+  return raw * raw * raw
+}

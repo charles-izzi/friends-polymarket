@@ -5,7 +5,12 @@ import { initializeApp } from 'firebase-admin/app'
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getMessaging } from 'firebase-admin/messaging'
 import * as crypto from 'crypto'
-import { calcCost, calcPrices, calcEffectiveB, rescaleShares } from './lmsr'
+import { calcCost, calcPrices, calcEffectiveB, rescaleShares, calcSplitScore } from './lmsr'
+
+// ---------- Commission ----------
+// Creator earns a commission on resolution = totalVolume * rate * splitScore
+// splitScore = normalized entropy of final prices (1 = max disagreement, 0 = consensus)
+const CREATOR_COMMISSION_RATE = 0.02
 
 // ---------- Stats types (mirrored from src/types.ts) ----------
 interface ResolvedBetRecord {
@@ -421,6 +426,7 @@ export const createBet = onCall(async (request) => {
     sharesSold: new Array(outcomes.length).fill(0),
     totalVolume: 0,
     lastTradeAt: null,
+    commissionEnabled: true,
   })
 
   // Send push notifications to all market members except creator and excluded
@@ -763,17 +769,84 @@ export const resolveBet = onCall(async (request) => {
       const statsSnap = await txn.get(statsRef)
       existingStats.set(user.userId, statsSnap.exists ? (statsSnap.data() as UserStats) : null)
     }
+    // Also read creator's stats if they're not already in stakedUsers (for commission P/L)
+    const creatorId = bet.createdBy as string
+    if (!existingStats.has(creatorId)) {
+      const creatorStatsRef = marketRef.collection('stats').doc(creatorId)
+      const creatorStatsSnap = await txn.get(creatorStatsRef)
+      existingStats.set(
+        creatorId,
+        creatorStatsSnap.exists ? (creatorStatsSnap.data() as UserStats) : null,
+      )
+    }
 
     // ---- All reads complete — now perform writes ----
+
+    // Calculate creator commission based on volume and how divided the group was
+    // Only applies to bets created with commission enabled
+    const commissionEnabled = bet.commissionEnabled === true
+    const sharesSold: number[] = bet.sharesSold
+    const bMax: number = bet.liquidityParam
+    const totalVolume: number = bet.totalVolume ?? 0
+    const bEff = calcEffectiveB(totalVolume, bMax)
+    const finalPrices = calcPrices(sharesSold, bEff)
+    const splitScore = commissionEnabled ? calcSplitScore(finalPrices) : 0
+    const rawCommission = commissionEnabled ? totalVolume * CREATOR_COMMISSION_RATE * splitScore : 0
+
+    // Total winning shares determines per-share deduction
+    const totalWinningShares = stakedUsers.reduce((sum, u) => sum + u.payout, 0)
+    // Commission can't exceed total payout pool
+    const commission = Math.min(rawCommission, totalWinningShares * 0.5)
+    const commissionPerShare = totalWinningShares > 0 ? commission / totalWinningShares : 0
+
+    // Adjust winner payouts: deduct commission proportionally
+    for (const wu of winnerUpdates) {
+      const originalCredit = wu.balanceCredit
+      // balanceCredit includes refund — only deduct commission from winning-shares portion
+      // Find the staked user record to separate payout from refund
+      const userId = wu.memberRef.id
+      const staked = stakedUsers.find((s) => s.userId === userId)
+      const winningShares = staked?.payout ?? 0
+      const deduction = winningShares * commissionPerShare
+      wu.balanceCredit = originalCredit - deduction
+    }
+
+    // Also adjust stakedUsers payout for accurate stats/notifications
+    for (const user of stakedUsers) {
+      if (user.payout > 0) {
+        const deduction = user.payout * commissionPerShare
+        user.payout = user.payout - deduction
+      }
+    }
 
     txn.update(betRef, {
       status: 'resolved',
       resolvedOutcome: outcomeIndex,
+      creatorCommission: commission,
+      commissionPerShare,
+      splitScore,
       ...(resolveDate ? { resolvesAt: Timestamp.fromDate(resolveDate) } : {}),
     })
 
+    let creatorCredited = false
+
     for (const { memberRef, balanceCredit, currentBalance } of winnerUpdates) {
-      txn.update(memberRef, { balance: currentBalance + balanceCredit })
+      const isCreator = memberRef.id === creatorId
+      const extra = isCreator && commission > 0 ? commission : 0
+      if (isCreator) creatorCredited = true
+      txn.update(memberRef, { balance: currentBalance + balanceCredit + extra })
+    }
+
+    // Credit the creator's balance with the commission if not already handled
+    if (commission > 0 && !creatorCredited) {
+      const creatorMemberRef = marketRef.collection('members').doc(creatorId)
+      if (memberBalances.has(creatorId)) {
+        // Creator has a position (was read) but isn't a winner
+        txn.update(creatorMemberRef, { balance: memberBalances.get(creatorId)! + commission })
+      } else {
+        // Creator has no position — use atomic increment
+        txn.update(creatorMemberRef, { balance: FieldValue.increment(commission) })
+      }
     }
 
     // Write stats for each staked user (based on valid positions only)
@@ -796,15 +869,19 @@ export const resolveBet = onCall(async (request) => {
 
       const currentBalance = memberBalances.get(user.userId) ?? 0
       const invCost = invalidatedCostPerUser.get(user.userId) ?? 0
-      const balanceAfter = currentBalance + (user.payout > 0 ? user.payout : 0) + invCost
+      // Include commission in creator's balance and profit
+      const isCreatorUser = user.userId === creatorId
+      const commissionForProfit = isCreatorUser ? commission : 0
+      const balanceAfter =
+        currentBalance + (user.payout > 0 ? user.payout : 0) + invCost + commissionForProfit
 
       const record: ResolvedBetRecord = {
         betId,
         question: bet.question,
         resolvedAt: Timestamp.now(),
         totalCost: user.totalCost,
-        payout: user.payout,
-        profit: user.payout - user.totalCost,
+        payout: user.payout + commissionForProfit,
+        profit: user.payout + commissionForProfit - user.totalCost,
         entryProbability,
         primaryOutcome,
         winningOutcome: outcomeIndex,
@@ -821,10 +898,38 @@ export const resolveBet = onCall(async (request) => {
       })
     }
 
+    // If creator has no position but earned commission, write a stats record for them
+    if (commission > 0 && !stakedUsers.some((u) => u.userId === creatorId)) {
+      const creatorBalance = memberBalances.get(creatorId) ?? 0
+      const record: ResolvedBetRecord = {
+        betId,
+        question: bet.question,
+        resolvedAt: Timestamp.now(),
+        totalCost: 0,
+        payout: commission,
+        profit: commission,
+        entryProbability: 0,
+        primaryOutcome: 0,
+        winningOutcome: outcomeIndex,
+        balanceAfter: creatorBalance + commission,
+        wasFavorite: false,
+      }
+
+      const existing = existingStats.get(creatorId)
+      const allRecords = [...(existing?.resolvedBets ?? []), record]
+      const statsComputed = recomputeStats(allRecords)
+      txn.set(marketRef.collection('stats').doc(creatorId), {
+        resolvedBets: allRecords,
+        ...statsComputed,
+      })
+    }
+
     return {
       question: bet.question as string,
       winningOutcome: bet.outcomes[outcomeIndex] as string,
       stakedUsers,
+      commission,
+      creatorId: bet.createdBy as string,
     }
   })
 
@@ -841,6 +946,20 @@ export const resolveBet = onCall(async (request) => {
       {
         title: `Resolved: "${pushData.winningOutcome}" won!`,
         body: `Cost: $${user.totalCost.toFixed(2)} · Payout: $${user.payout.toFixed(2)} · Profit: ${profitStr}${refundStr}`,
+      },
+      { betId, type: 'bet_resolved', marketId },
+    ).catch(() => {})
+  }
+
+  // Notify the creator about their commission earned
+  if (pushData.commission > 0) {
+    sendPushToUsers(
+      db,
+      marketId,
+      [pushData.creatorId],
+      {
+        title: `Commission earned!`,
+        body: `You earned $${pushData.commission.toFixed(2)} for creating "${pushData.question}"`,
       },
       { betId, type: 'bet_resolved', marketId },
     ).catch(() => {})
