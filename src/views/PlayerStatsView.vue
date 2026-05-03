@@ -89,6 +89,17 @@ const pnlYMax = computed(() => {
 })
 
 // --- Current Holdings ---
+// --- Average Room Splitting (for bets created by this user) ---
+const avgSplitScore = computed(() => {
+  const uid = targetUserId.value
+  const resolved = betsStore.bets.filter(
+    (b) => b.status === 'resolved' && b.createdBy === uid && b.splitScore != null,
+  )
+  if (resolved.length === 0) return null
+  const sum = resolved.reduce((acc, b) => acc + (b.splitScore ?? 0), 0)
+  return sum / resolved.length
+})
+
 const currentHoldings = computed(() => {
   const uid = targetUserId.value
   const activeBets = betsStore.bets.filter((b) => b.status === 'open' || b.status === 'closed')
@@ -128,6 +139,7 @@ type StatKey =
   | 'favoriteRate'
   | 'totalPnL'
   | 'accuracy'
+  | 'avgSplit'
 
 const leaderboardStat = ref<StatKey | null>(null)
 
@@ -139,6 +151,7 @@ const statLabels: Record<StatKey, string> = {
   favoriteRate: 'Favorite %',
   totalPnL: 'Total P&L',
   accuracy: 'Accuracy',
+  avgSplit: 'Avg Split',
 }
 
 interface LeaderboardEntry {
@@ -165,6 +178,8 @@ function getStatValue(s: UserStats, key: StatKey): number {
       return s.totalProfit
     case 'accuracy':
       return s.totalResolved > 0 ? s.totalProfit / s.totalResolved : 0
+    case 'avgSplit':
+      return 0 // computed separately from betsStore
   }
 }
 
@@ -184,12 +199,41 @@ function formatStatValue(v: number, key: StatKey): string {
       return fmtDollars(v)
     case 'accuracy':
       return fmtDollars(v)
+    case 'avgSplit':
+      return fmtPct(v)
   }
 }
 
 const leaderboard = computed<LeaderboardEntry[]>(() => {
   const key = leaderboardStat.value
   if (!key) return []
+
+  // avgSplit leaderboard is computed from betsStore, not UserStats
+  if (key === 'avgSplit') {
+    const byCreator = new Map<string, number[]>()
+    for (const b of betsStore.bets) {
+      if (b.status === 'resolved' && b.splitScore != null) {
+        const arr = byCreator.get(b.createdBy) ?? []
+        arr.push(b.splitScore)
+        byCreator.set(b.createdBy, arr)
+      }
+    }
+    const entries: LeaderboardEntry[] = []
+    for (const [userId, scores] of byCreator) {
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length
+      const member = marketStore.members.find((m) => m.userId === userId)
+      entries.push({
+        userId,
+        name: member?.displayName ?? userId.slice(0, 8),
+        value: avg,
+        formatted: formatStatValue(avg, key),
+        isCurrentUser: userId === targetUserId.value,
+      })
+    }
+    entries.sort((a, b) => b.value - a.value)
+    return entries
+  }
+
   const allStats = statsStore.allMemberStats
   const entries: LeaderboardEntry[] = []
   for (const [userId, s] of Object.entries(allStats)) {
@@ -506,6 +550,30 @@ function fmtPct(v: number): string {
                 :class="stats!.totalProfit >= 0 ? 'text-success' : 'text-error'"
               >
                 {{ fmtDollars(stats!.totalProfit) }}
+              </p>
+            </v-card>
+          </v-col>
+
+          <!-- Avg Room Split -->
+          <v-col v-if="avgSplitScore !== null" cols="6" sm="3">
+            <v-card
+              variant="outlined"
+              class="pa-3 text-center stat-card"
+              style="height: 100%"
+              @click="openLeaderboard('avgSplit')"
+            >
+              <div class="d-flex align-center justify-center">
+                <span class="text-caption text-medium-emphasis">Avg Split</span>
+                <v-btn icon size="x-small" variant="text" class="ml-1" @click.stop>
+                  <v-icon size="14">mdi-information-outline</v-icon>
+                  <v-tooltip activator="parent" location="top">
+                    Average room-splitting score for bets you created. Higher means your bets
+                    divided the group more.
+                  </v-tooltip>
+                </v-btn>
+              </div>
+              <p class="text-h5 font-weight-bold mt-1">
+                {{ fmtPct(avgSplitScore) }}
               </p>
             </v-card>
           </v-col>
