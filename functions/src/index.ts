@@ -687,9 +687,14 @@ export const resolveBet = onCall(async (request) => {
     const invalidatedCostPerUser = new Map<string, number>()
     const invalidatedSharesPerUser = new Map<string, number[]>()
 
-    if (resolveCutoff) {
+    // Round cutoff UP to the end of its minute so trades within the same minute are valid
+    const resolveCutoffMinute = resolveCutoff
+      ? Math.floor(resolveCutoff.toMillis() / 60000) * 60000 + 59999
+      : null
+
+    if (resolveCutoffMinute !== null) {
       for (const t of allTrades) {
-        if (t.createdAt && t.createdAt.toMillis() > resolveCutoff.toMillis()) {
+        if (t.createdAt && t.createdAt.toMillis() > resolveCutoffMinute) {
           const userId: string = t.userId
           invalidatedCostPerUser.set(
             userId,
