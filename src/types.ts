@@ -39,6 +39,7 @@ export interface Bet {
   creatorCommission?: number
   commissionPerShare?: number
   splitScore?: number
+  contests?: string[]
 }
 
 export interface Comment {
@@ -75,7 +76,6 @@ export interface ResolvedBetRecord {
   entryProbability: number
   primaryOutcome: number
   winningOutcome: number
-  balanceAfter: number
   wasFavorite: boolean
 }
 
@@ -97,6 +97,9 @@ export type NotificationType =
   | 'bet_created'
   | 'bet_resolved'
   | 'bet_cancelled'
+  | 'bet_unresolved'
+  | 'bet_contested'
+  | 'bet_overturned'
   | 'resolution_needed'
   | 'first_wager'
 

@@ -118,8 +118,12 @@ const resolveOutcome = ref(0)
 const resolveResolvesAt = ref('')
 const showResolveDialog = ref(false)
 const showCancelDialog = ref(false)
+const showUnresolveDialog = ref(false)
+const showContestDialog = ref(false)
 const showEditDialog = ref(false)
 const resolving = ref(false)
+const unresolving = ref(false)
+const contesting = ref(false)
 const editSubmitting = ref(false)
 const detailTab = ref('chart')
 
@@ -479,6 +483,32 @@ async function handleCancel() {
   }
 }
 
+async function handleUnresolve() {
+  unresolving.value = true
+  try {
+    await betsStore.unresolveBet(betId.value)
+    showUnresolveDialog.value = false
+  } finally {
+    unresolving.value = false
+  }
+}
+
+async function handleContest() {
+  contesting.value = true
+  try {
+    await betsStore.contestBet(betId.value)
+    showContestDialog.value = false
+  } finally {
+    contesting.value = false
+  }
+}
+
+const contestCount = computed(() => (bet.value?.contests ?? []).length)
+const hasContested = computed(() => {
+  const uid = authStore.user?.uid
+  return uid ? (bet.value?.contests ?? []).includes(uid) : false
+})
+
 function openEditDialog() {
   if (!bet.value) return
   editQuestion.value = bet.value.question
@@ -830,6 +860,19 @@ onUnmounted(() => {
             <v-tooltip activator="parent" location="bottom">Cancel Bet</v-tooltip>
           </v-btn>
         </template>
+        <template v-if="isCreator && bet && bet.status === 'resolved'">
+          <v-btn
+            icon="mdi-undo"
+            color="warning"
+            variant="tonal"
+            size="small"
+            class="ml-1"
+            @click="showUnresolveDialog = true"
+          >
+            <v-icon>mdi-undo</v-icon>
+            <v-tooltip activator="parent" location="bottom">Unresolve Bet</v-tooltip>
+          </v-btn>
+        </template>
       </div>
 
       <template v-if="!bet">
@@ -976,6 +1019,23 @@ onUnmounted(() => {
           </div>
           <div v-if="bet.resolvesAt && myInvalidatedCost > 0" class="text-body-2 mt-2">
             Trades after {{ bet.resolvesAt.toDate().toLocaleString() }} were refunded.
+          </div>
+          <div v-if="!isCreator" class="mt-3">
+            <v-btn
+              v-if="!hasContested"
+              size="small"
+              color="warning"
+              variant="tonal"
+              prepend-icon="mdi-flag"
+              @click="showContestDialog = true"
+            >
+              Contest Resolution
+              <span v-if="contestCount > 0" class="ml-1 text-caption">({{ contestCount }}/2)</span>
+            </v-btn>
+            <v-chip v-else size="small" color="warning" variant="tonal">
+              <v-icon start size="small">mdi-flag</v-icon>
+              Contested ({{ contestCount }}/2)
+            </v-chip>
           </div>
         </v-alert>
 
@@ -1731,6 +1791,44 @@ onUnmounted(() => {
               <v-spacer />
               <v-btn variant="text" @click="showCancelDialog = false">Go Back</v-btn>
               <v-btn color="error" :loading="resolving" @click="handleCancel"> Cancel Bet </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Unresolve dialog -->
+        <v-dialog v-model="showUnresolveDialog" max-width="400">
+          <v-card>
+            <v-card-title>Unresolve Bet</v-card-title>
+            <v-card-text>
+              <p class="text-body-2">
+                Are you sure? All payouts, commissions, and stats from this resolution will be
+                reversed. The bet will reopen for re-resolution.
+              </p>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn variant="text" @click="showUnresolveDialog = false">Go Back</v-btn>
+              <v-btn color="warning" :loading="unresolving" @click="handleUnresolve">
+                Unresolve
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Contest dialog -->
+        <v-dialog v-model="showContestDialog" max-width="400">
+          <v-card>
+            <v-card-title>Contest Resolution</v-card-title>
+            <v-card-text>
+              <p class="text-body-2">
+                Are you sure you want to contest this resolution? If 2 members contest, the bet will
+                be unresolved and all payouts reversed.
+              </p>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn variant="text" @click="showContestDialog = false">Go Back</v-btn>
+              <v-btn color="warning" :loading="contesting" @click="handleContest"> Contest </v-btn>
             </v-card-actions>
           </v-card>
         </v-dialog>

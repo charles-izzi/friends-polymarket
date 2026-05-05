@@ -219,6 +219,26 @@ export const useBetsStore = defineStore('bets', () => {
               body: `"${bet.question}" · Refunded: $${myPos.totalCost.toFixed(2)}`,
             })
           }
+        } else if (
+          (bet.status === 'open' || bet.status === 'closed') &&
+          prev.status === 'resolved' &&
+          !selfActedBetIds.has(bet.id)
+        ) {
+          // Handled by push notification — no snapshot-based toast
+        }
+      }
+
+      // Contest filed (status still resolved but contests array grew)
+      if (prev && bet.status === 'resolved' && !selfActedBetIds.has(bet.id)) {
+        const prevContests: string[] = prev.contests ?? []
+        const newContests: string[] = bet.contests ?? []
+        if (newContests.length > prevContests.length) {
+          notificationsStore.push({
+            type: 'bet_contested',
+            betId: bet.id,
+            title: `Resolution contested`,
+            body: `"${bet.question}" (${newContests.length}/2)`,
+          })
         }
       }
 
@@ -440,6 +460,71 @@ export const useBetsStore = defineStore('bets', () => {
     }
   }
 
+  async function unresolveBet(betId: string) {
+    const marketStore = useMarketStore()
+    if (!marketStore.market) throw new Error('No market')
+
+    error.value = ''
+    try {
+      const fn = httpsCallable<
+        { marketId: string; betId: string; database: string },
+        { success: boolean }
+      >(functions, 'unresolveBet')
+
+      selfActedBetIds.add(betId)
+      await fn({
+        marketId: marketStore.market.id,
+        betId,
+        database: dbName,
+      })
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : 'Failed to unresolve bet'
+      throw e
+    }
+  }
+
+  async function contestBet(betId: string) {
+    const marketStore = useMarketStore()
+    if (!marketStore.market) throw new Error('No market')
+    const notificationsStore = useNotificationsStore()
+
+    error.value = ''
+    const bet = bets.value.find((b) => b.id === betId)
+    const question = bet?.question ?? ''
+    try {
+      const fn = httpsCallable<
+        { marketId: string; betId: string; database: string },
+        { success: boolean; overturned: boolean }
+      >(functions, 'contestBet')
+
+      selfActedBetIds.add(betId)
+      const result = await fn({
+        marketId: marketStore.market.id,
+        betId,
+        database: dbName,
+      })
+
+      if (result.data.overturned) {
+        notificationsStore.push({
+          type: 'bet_overturned',
+          betId,
+          title: 'Bet overturned',
+          body: `"${question}" has been unresolved after 2 contests`,
+        })
+      } else {
+        notificationsStore.push({
+          type: 'bet_contested',
+          betId,
+          title: 'Contest filed',
+          body: `Your contest on "${question}" has been recorded`,
+        })
+      }
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : 'Failed to contest bet'
+      throw e
+    }
+  }
+
   async function editBet(
     betId: string,
     data: {
@@ -498,6 +583,8 @@ export const useBetsStore = defineStore('bets', () => {
     executeTrade,
     resolveBet,
     cancelBet,
+    unresolveBet,
+    contestBet,
     editBet,
     cleanup,
   }

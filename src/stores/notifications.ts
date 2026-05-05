@@ -50,6 +50,12 @@ export const useNotificationsStore = defineStore('notifications', () => {
         return 'mdi-gavel'
       case 'bet_cancelled':
         return 'mdi-cancel'
+      case 'bet_unresolved':
+        return 'mdi-undo'
+      case 'bet_contested':
+        return 'mdi-flag'
+      case 'bet_overturned':
+        return 'mdi-flag-remove'
       case 'resolution_needed':
         return 'mdi-alert-circle'
       case 'first_wager':
@@ -65,6 +71,12 @@ export const useNotificationsStore = defineStore('notifications', () => {
         return 'success'
       case 'bet_cancelled':
         return 'warning'
+      case 'bet_unresolved':
+        return 'warning'
+      case 'bet_contested':
+        return 'warning'
+      case 'bet_overturned':
+        return 'error'
       case 'resolution_needed':
         return 'warning'
       case 'first_wager':
@@ -95,6 +107,17 @@ export const useNotificationsStore = defineStore('notifications', () => {
         window.dispatchEvent(
           new CustomEvent('notification-navigate', { detail: { url: event.data.url } }),
         )
+      }
+      // Foreground push forwarded from service worker
+      if (event.data?.type === 'PUSH_RECEIVED') {
+        const data = event.data.data ?? {}
+        if (!data.betId || !data.type) return
+        push({
+          type: data.type as NotificationType,
+          betId: data.betId,
+          title: data.title ?? event.data.notification?.title ?? '',
+          body: data.body ?? event.data.notification?.body ?? '',
+        })
       }
     })
   }

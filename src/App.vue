@@ -424,7 +424,7 @@ onUnmounted(() => {
 
     <v-snackbar
       v-model="showSnackbar"
-      :timeout="7000"
+      :timeout="-1"
       location="bottom"
       :color="
         notificationsStore.current

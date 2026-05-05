@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { doc, collection, onSnapshot, getDocs } from 'firebase/firestore'
+import { doc, collection, onSnapshot } from 'firebase/firestore'
 import { db } from '@/firebase'
 import { useMarketStore } from '@/stores/market'
 import { useAuthStore } from '@/stores/auth'
@@ -13,6 +13,7 @@ export const useStatsStore = defineStore('stats', () => {
   const allStatsLoading = ref(false)
 
   let unsubMyStats: (() => void) | null = null
+  let unsubAllStats: (() => void) | null = null
 
   function listenToStats(userId?: string) {
     cleanup()
@@ -35,19 +36,19 @@ export const useStatsStore = defineStore('stats', () => {
     const marketStore = useMarketStore()
     if (!marketStore.market) return
 
+    unsubAllStats?.()
     allStatsLoading.value = true
     allMemberStats.value = {}
-    try {
-      const statsCol = collection(db, 'markets', marketStore.market.id, 'stats')
-      const snap = await getDocs(statsCol)
+
+    const statsCol = collection(db, 'markets', marketStore.market.id, 'stats')
+    unsubAllStats = onSnapshot(statsCol, (snap) => {
       const result: Record<string, UserStats> = {}
       for (const d of snap.docs) {
         result[d.id] = d.data() as UserStats
       }
       allMemberStats.value = result
-    } finally {
       allStatsLoading.value = false
-    }
+    })
   }
 
   const cumulativePnL = computed(() => {
@@ -61,7 +62,7 @@ export const useStatsStore = defineStore('stats', () => {
     return result
   })
 
-  /** For each resolved-bet timestamp, compute rank of each member by balanceAfter */
+  /** For each resolved-bet timestamp, compute rank of each member by cumulative P/L */
   const leaderboardRankHistory = computed(() => {
     const allStats = allMemberStats.value
     const userIds = Object.keys(allStats)
@@ -133,6 +134,10 @@ export const useStatsStore = defineStore('stats', () => {
     if (unsubMyStats) {
       unsubMyStats()
       unsubMyStats = null
+    }
+    if (unsubAllStats) {
+      unsubAllStats()
+      unsubAllStats = null
     }
     myStats.value = null
     allMemberStats.value = {}

@@ -24,7 +24,6 @@ interface ResolvedBetRecord {
   entryProbability: number
   primaryOutcome: number
   winningOutcome: number
-  balanceAfter: number
   wasFavorite: boolean
 }
 
@@ -877,13 +876,9 @@ export const resolveBet = onCall(async (request) => {
         wasFavorite = (entryPrices[primaryOutcome] ?? 0) >= maxPrice - 0.001
       }
 
-      const currentBalance = memberBalances.get(user.userId) ?? 0
-      const invCost = invalidatedCostPerUser.get(user.userId) ?? 0
-      // Include commission in creator's balance and profit
+      // Include commission in creator's profit
       const isCreatorUser = user.userId === creatorId
       const commissionForProfit = isCreatorUser ? commission : 0
-      const balanceAfter =
-        currentBalance + (user.payout > 0 ? user.payout : 0) + invCost + commissionForProfit
 
       const record: ResolvedBetRecord = {
         betId,
@@ -895,7 +890,6 @@ export const resolveBet = onCall(async (request) => {
         entryProbability,
         primaryOutcome,
         winningOutcome: outcomeIndex,
-        balanceAfter,
         wasFavorite,
       }
 
@@ -910,7 +904,6 @@ export const resolveBet = onCall(async (request) => {
 
     // If creator has no position but earned commission, write a stats record for them
     if (commission > 0 && !stakedUsers.some((u) => u.userId === creatorId)) {
-      const creatorBalance = memberBalances.get(creatorId) ?? 0
       const record: ResolvedBetRecord = {
         betId,
         question: bet.question,
@@ -921,7 +914,6 @@ export const resolveBet = onCall(async (request) => {
         entryProbability: 0,
         primaryOutcome: 0,
         winningOutcome: outcomeIndex,
-        balanceAfter: creatorBalance + commission,
         wasFavorite: false,
       }
 
@@ -976,6 +968,376 @@ export const resolveBet = onCall(async (request) => {
   }
 
   return { success: true }
+})
+
+// ---------- Unresolve helpers ----------
+
+/**
+ * Shared unresolve logic used by both direct unresolve (creator) and contest-triggered unresolve.
+ * Must be called within a Firestore transaction with all reads already done.
+ */
+function performUnresolve(
+  txn: FirebaseFirestore.Transaction,
+  betRef: FirebaseFirestore.DocumentReference,
+  bet: FirebaseFirestore.DocumentData,
+  marketRef: FirebaseFirestore.DocumentReference,
+  positionsSnap: FirebaseFirestore.QuerySnapshot,
+  allTrades: FirebaseFirestore.DocumentData[],
+  existingStats: Map<string, UserStats | null>,
+  memberBalances: Map<string, number>,
+): { stakedUserIds: string[] } {
+  const outcomeIndex: number = bet.resolvedOutcome
+  const creatorId: string = bet.createdBy
+  const commissionEnabled = bet.commissionEnabled === true
+
+  // Recompute what each user was credited at resolution time
+  const resolveCutoff = bet.resolvesAt ?? null
+  const resolveCutoffMinute = resolveCutoff
+    ? Math.floor(resolveCutoff.toMillis() / 60000) * 60000 + 59999
+    : null
+
+  const invalidatedCostPerUser = new Map<string, number>()
+  const invalidatedSharesPerUser = new Map<string, number[]>()
+
+  if (resolveCutoffMinute !== null) {
+    for (const t of allTrades) {
+      if (t.createdAt && t.createdAt.toMillis() > resolveCutoffMinute) {
+        const userId: string = t.userId
+        invalidatedCostPerUser.set(
+          userId,
+          (invalidatedCostPerUser.get(userId) ?? 0) + (t.cost as number),
+        )
+        if (!invalidatedSharesPerUser.has(userId)) {
+          invalidatedSharesPerUser.set(userId, new Array(bet.outcomes.length).fill(0))
+        }
+        const shares = invalidatedSharesPerUser.get(userId)!
+        shares[t.outcomeIndex as number] =
+          (shares[t.outcomeIndex as number] ?? 0) + (t.shares as number)
+      }
+    }
+  }
+
+  // Calculate the fee rate that was applied at resolution
+  const sharesSold: number[] = bet.sharesSold
+  const bMax: number = bet.liquidityParam
+  const totalVolume: number = bet.totalVolume ?? 0
+  const bEff = calcEffectiveB(totalVolume, bMax)
+  const finalPrices = calcPrices(sharesSold, bEff)
+  const splitScore = commissionEnabled ? calcSplitScore(finalPrices) : 0
+  const feeRate = CREATOR_COMMISSION_RATE * splitScore
+
+  // Determine what each user was credited and subtract it
+  const stakedUserIds: string[] = []
+  let totalCommission = 0
+
+  for (const posDoc of positionsSnap.docs) {
+    const pos = posDoc.data()
+    const rawShares: number[] = pos.shares
+    const invShares = invalidatedSharesPerUser.get(posDoc.id)
+    const invCost = invalidatedCostPerUser.get(posDoc.id) ?? 0
+    const validShares = invShares ? rawShares.map((s, i) => s - (invShares[i] ?? 0)) : rawShares
+    const validWinningShares = validShares[outcomeIndex] ?? 0
+
+    const totalValidShares = validShares.reduce((s, v) => s + v, 0)
+    if (totalValidShares <= 0 && pos.totalCost <= 0 && invCost <= 0) continue
+
+    stakedUserIds.push(posDoc.id)
+
+    // What was credited: validWinningShares - fee + refund
+    const fee = validWinningShares > 0 ? validWinningShares * feeRate : 0
+    totalCommission += fee
+    const credit = validWinningShares - fee + invCost
+
+    if (credit > 0) {
+      const currentBalance = memberBalances.get(posDoc.id) ?? 0
+      const memberRef = marketRef.collection('members').doc(posDoc.id)
+      txn.update(memberRef, { balance: currentBalance - credit })
+    }
+
+    // Remove this bet's record from user stats
+    const userStats = existingStats.get(posDoc.id)
+    if (userStats) {
+      const filteredRecords = userStats.resolvedBets.filter((r) => r.betId !== betRef.id)
+      if (filteredRecords.length > 0) {
+        const statsComputed = recomputeStats(filteredRecords)
+        txn.set(marketRef.collection('stats').doc(posDoc.id), {
+          resolvedBets: filteredRecords,
+          ...statsComputed,
+        })
+      } else {
+        txn.delete(marketRef.collection('stats').doc(posDoc.id))
+      }
+    }
+  }
+
+  // Reverse creator commission
+  if (totalCommission > 0) {
+    const creatorBalance = memberBalances.get(creatorId) ?? 0
+    const creatorMemberRef = marketRef.collection('members').doc(creatorId)
+    // If creator was also a staked user, their balance was already adjusted above;
+    // but we need to also subtract the commission they received
+    if (stakedUserIds.includes(creatorId)) {
+      // Already subtracted their winning credit above; now also subtract commission
+      txn.update(creatorMemberRef, { balance: FieldValue.increment(-totalCommission) })
+    } else {
+      // Creator only received commission (no position)
+      txn.update(creatorMemberRef, { balance: creatorBalance - totalCommission })
+    }
+
+    // Remove creator's commission-only stats record if they weren't staked
+    if (!stakedUserIds.includes(creatorId)) {
+      const creatorStats = existingStats.get(creatorId)
+      if (creatorStats) {
+        const filteredRecords = creatorStats.resolvedBets.filter((r) => r.betId !== betRef.id)
+        if (filteredRecords.length > 0) {
+          const statsComputed = recomputeStats(filteredRecords)
+          txn.set(marketRef.collection('stats').doc(creatorId), {
+            resolvedBets: filteredRecords,
+            ...statsComputed,
+          })
+        } else {
+          txn.delete(marketRef.collection('stats').doc(creatorId))
+        }
+      }
+    }
+  }
+
+  // Reset bet status: open if closesAt is in the future, else closed
+  const closesAt = bet.closesAt as FirebaseFirestore.Timestamp
+  const newStatus = closesAt.toMillis() > Date.now() ? 'open' : 'closed'
+
+  txn.update(betRef, {
+    status: newStatus,
+    resolvedOutcome: FieldValue.delete(),
+    creatorCommission: FieldValue.delete(),
+    commissionPerShare: FieldValue.delete(),
+    splitScore: FieldValue.delete(),
+    resolvesAt: FieldValue.delete(),
+    contests: FieldValue.delete(),
+  })
+
+  return { stakedUserIds }
+}
+
+export const unresolveBet = onCall(async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
+
+  const { marketId, betId, database } = request.data as {
+    marketId: string
+    betId: string
+    database?: string
+  }
+  const db = getDb(database)
+
+  if (!marketId || !betId) {
+    throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')
+  }
+
+  const marketRef = db.collection('markets').doc(marketId)
+  const betRef = marketRef.collection('bets').doc(betId)
+
+  const pushData = await db.runTransaction(async (txn) => {
+    const betSnap = await txn.get(betRef)
+    if (!betSnap.exists) throw new HttpsError('not-found', 'Bet not found')
+
+    const bet = betSnap.data()!
+
+    if (bet.createdBy !== uid) {
+      throw new HttpsError('permission-denied', 'Only the bet creator can unresolve this bet')
+    }
+
+    if (bet.status !== 'resolved') {
+      throw new HttpsError('failed-precondition', 'Bet is not resolved')
+    }
+
+    // All reads
+    const positionsSnap = await txn.get(betRef.collection('positions'))
+    const tradesSnap = await txn.get(betRef.collection('trades').orderBy('createdAt', 'asc'))
+    const allTrades = tradesSnap.docs.map((d) => d.data())
+
+    const memberBalances = new Map<string, number>()
+    const existingStats = new Map<string, UserStats | null>()
+    const allUserIds = new Set<string>()
+
+    for (const posDoc of positionsSnap.docs) allUserIds.add(posDoc.id)
+    allUserIds.add(bet.createdBy)
+
+    for (const userId of allUserIds) {
+      const memberSnap = await txn.get(marketRef.collection('members').doc(userId))
+      if (memberSnap.exists) memberBalances.set(userId, memberSnap.data()!.balance)
+      const statsSnap = await txn.get(marketRef.collection('stats').doc(userId))
+      existingStats.set(userId, statsSnap.exists ? (statsSnap.data() as UserStats) : null)
+    }
+
+    const { stakedUserIds } = performUnresolve(
+      txn,
+      betRef,
+      bet,
+      marketRef,
+      positionsSnap,
+      allTrades,
+      existingStats,
+      memberBalances,
+    )
+
+    return { question: bet.question as string, stakedUserIds }
+  })
+
+  // Notify all staked users that the bet was unresolved
+  const targetIds = pushData.stakedUserIds.filter((id) => id !== uid)
+  if (targetIds.length > 0) {
+    sendPushToUsers(
+      db,
+      marketId,
+      targetIds,
+      {
+        title: 'Bet unresolved',
+        body: `"${pushData.question}" has been reopened by its creator`,
+      },
+      { betId, type: 'bet_unresolved', marketId },
+    ).catch(() => {})
+  }
+
+  return { success: true }
+})
+
+export const contestBet = onCall(async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Must be signed in')
+
+  const { marketId, betId, database } = request.data as {
+    marketId: string
+    betId: string
+    database?: string
+  }
+  const db = getDb(database)
+
+  if (!marketId || !betId) {
+    throw new HttpsError('invalid-argument', 'Market ID and bet ID are required')
+  }
+
+  const marketRef = db.collection('markets').doc(marketId)
+  const betRef = marketRef.collection('bets').doc(betId)
+
+  const pushData = await db.runTransaction(async (txn) => {
+    const betSnap = await txn.get(betRef)
+    if (!betSnap.exists) throw new HttpsError('not-found', 'Bet not found')
+
+    const bet = betSnap.data()!
+
+    if (bet.status !== 'resolved') {
+      throw new HttpsError('failed-precondition', 'Bet is not resolved')
+    }
+
+    if (bet.createdBy === uid) {
+      throw new HttpsError('permission-denied', 'The bet creator cannot contest their own bet')
+    }
+
+    // Verify user is a market member
+    const memberSnap = await txn.get(marketRef.collection('members').doc(uid))
+    if (!memberSnap.exists) {
+      throw new HttpsError('permission-denied', 'Must be a market member')
+    }
+
+    const contests: string[] = bet.contests ?? []
+    if (contests.includes(uid)) {
+      throw new HttpsError('already-exists', 'You have already contested this bet')
+    }
+
+    const contestorName = memberSnap.data()!.displayName || 'Someone'
+    const newContests = [...contests, uid]
+
+    // If threshold reached (2 contests), unresolve
+    if (newContests.length >= 2) {
+      // Need all reads for unresolve
+      const positionsSnap = await txn.get(betRef.collection('positions'))
+      const tradesSnap = await txn.get(betRef.collection('trades').orderBy('createdAt', 'asc'))
+      const allTrades = tradesSnap.docs.map((d) => d.data())
+
+      const memberBalances = new Map<string, number>()
+      const existingStats = new Map<string, UserStats | null>()
+      const allUserIds = new Set<string>()
+
+      for (const posDoc of positionsSnap.docs) allUserIds.add(posDoc.id)
+      allUserIds.add(bet.createdBy)
+
+      for (const userId of allUserIds) {
+        const mSnap = await txn.get(marketRef.collection('members').doc(userId))
+        if (mSnap.exists) memberBalances.set(userId, mSnap.data()!.balance)
+        const sSnap = await txn.get(marketRef.collection('stats').doc(userId))
+        existingStats.set(userId, sSnap.exists ? (sSnap.data() as UserStats) : null)
+      }
+
+      performUnresolve(
+        txn,
+        betRef,
+        bet,
+        marketRef,
+        positionsSnap,
+        allTrades,
+        existingStats,
+        memberBalances,
+      )
+
+      const stakedUserIds = positionsSnap.docs.map((d) => d.id)
+      return {
+        overturned: true,
+        question: bet.question as string,
+        creatorId: bet.createdBy as string,
+        contestorName,
+        stakedUserIds,
+      }
+    } else {
+      // First contest — just record it
+      txn.update(betRef, { contests: newContests })
+
+      // Read positions to determine staked users for notifications
+      const positionsSnap = await txn.get(betRef.collection('positions'))
+      const stakedUserIds = positionsSnap.docs.map((d) => d.id)
+      return {
+        overturned: false,
+        question: bet.question as string,
+        creatorId: bet.createdBy as string,
+        contestorName,
+        stakedUserIds,
+      }
+    }
+  })
+
+  if (pushData.overturned) {
+    // Notify staked users (except the contestor) that the bet was overturned
+    const targetIds = pushData.stakedUserIds.filter((id: string) => id !== uid)
+    if (targetIds.length > 0) {
+      sendPushToUsers(
+        db,
+        marketId,
+        targetIds,
+        {
+          title: 'Bet overturned',
+          body: `"${pushData.question}" has been unresolved after 2 contests`,
+        },
+        { betId, type: 'bet_overturned', marketId },
+      ).catch(() => {})
+    }
+  } else {
+    // Notify staked users (except the contestor) about the contest
+    const targetIds = pushData.stakedUserIds.filter((id: string) => id !== uid)
+    if (targetIds.length > 0) {
+      sendPushToUsers(
+        db,
+        marketId,
+        targetIds,
+        {
+          title: 'Resolution contested',
+          body: `${pushData.contestorName} contested "${pushData.question}"`,
+        },
+        { betId, type: 'bet_contested', marketId },
+      ).catch(() => {})
+    }
+  }
+
+  return { success: true, overturned: pushData.overturned }
 })
 
 export const cancelBet = onCall(async (request) => {
@@ -1361,14 +1723,6 @@ export const backfillStats = onCall(async (request) => {
   // Accumulate stats per user
   const userRecords = new Map<string, ResolvedBetRecord[]>()
 
-  // Read all member balances for balance tracking
-  const membersSnap = await marketRef.collection('members').get()
-  const memberBalances = new Map<string, number>()
-  const defaultBalance = marketDoc.data()!.defaultBalance ?? 0
-  for (const m of membersSnap.docs) {
-    memberBalances.set(m.id, defaultBalance)
-  }
-
   for (const betDoc of resolvedBetDocs) {
     const bet = betDoc.data()
     const winningOutcome: number = bet.resolvedOutcome
@@ -1408,11 +1762,6 @@ export const backfillStats = onCall(async (request) => {
         wasFavorite = (entryPrices[primaryOutcome] ?? 0) >= maxPrice - 0.001
       }
 
-      // Track running balance
-      const prevBalance = memberBalances.get(userId) ?? defaultBalance
-      const balanceAfter = prevBalance - pos.totalCost + payout
-      memberBalances.set(userId, balanceAfter)
-
       const record: ResolvedBetRecord = {
         betId: betDoc.id,
         question: bet.question,
@@ -1423,7 +1772,6 @@ export const backfillStats = onCall(async (request) => {
         entryProbability,
         primaryOutcome,
         winningOutcome,
-        balanceAfter,
         wasFavorite,
       }
 

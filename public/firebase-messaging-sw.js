@@ -1,3 +1,8 @@
+// ── Lifecycle ───────────────────────────────────────────────────────
+// Activate new SW immediately without waiting for all tabs to close
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()))
+
 // ── Push handler ────────────────────────────────────────────────────
 // Registered BEFORE Firebase SDK imports so it works even if the CDN
 // scripts fail to load (common on mobile when the SW wakes with no
@@ -36,8 +41,16 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      // App is in the foreground — skip; in-app toast handles it
-      if (windowClients.some((c) => c.visibilityState === 'visible')) return
+      // App is in the foreground — forward to page for in-app toast
+      const visibleClient = windowClients.find((c) => c.visibilityState === 'visible')
+      if (visibleClient) {
+        visibleClient.postMessage({
+          type: 'PUSH_RECEIVED',
+          data: pushData,
+          notification: { title, body },
+        })
+        return
+      }
 
       return self.registration.showNotification(title, {
         body,
