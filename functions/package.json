@@ -8,7 +8,8 @@
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "reverse-trade": "npx cross-env GOOGLE_APPLICATION_CREDENTIALS=../internal-polymarket-firebase-adminsdk-fbsvc-5174b0f45b.json npx ts-node src/reverse-trade.ts"
   },
   "engines": {
     "node": "24"
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^5.12.0",
     "@typescript-eslint/parser": "^5.12.0",
+    "cross-env": "^10.1.0",
     "eslint": "^8.9.0",
     "eslint-config-google": "^0.14.0",
     "eslint-plugin-import": "^2.25.4",
