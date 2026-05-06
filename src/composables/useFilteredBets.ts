@@ -51,6 +51,8 @@ export function useFilteredBets() {
 
   const sortedBets = computed(() => {
     const filters = getFilters()
+    const statusFilters = filters.filter((f) => STATUS_VALUES.includes(f))
+    const hasStatusFilter = statusFilters.length > 0
 
     const filtered = betsStore.bets.filter((bet) => {
       const q = (searchQuery.value ?? '').trim().toLowerCase()
@@ -59,9 +61,6 @@ export function useFilteredBets() {
       if (filters.length === 0) return matchesSearch
 
       const status = effectiveStatus(bet)
-
-      const statusFilters = filters.filter((f) => STATUS_VALUES.includes(f))
-      const hasStatusFilter = statusFilters.length > 0
       const matchesStatus = !hasStatusFilter || statusFilters.includes(status)
 
       const matchesStake =
@@ -99,13 +98,17 @@ export function useFilteredBets() {
       )
     })
 
+    const showingPast =
+      statusFilters.length > 0 && statusFilters.every((f) => f !== 'open')
+
     return [...filtered].sort((a, b) => {
       const aOpen = effectiveStatus(a) === 'open' ? 0 : 1
       const bOpen = effectiveStatus(b) === 'open' ? 0 : 1
       if (aOpen !== bOpen) return aOpen - bOpen
 
+      const dir = showingPast ? -1 : 1
       return (
-        a.closesAt.toMillis() - b.closesAt.toMillis() ||
+        dir * (a.closesAt.toMillis() - b.closesAt.toMillis()) ||
         b.createdAt.toMillis() - a.createdAt.toMillis()
       )
     })

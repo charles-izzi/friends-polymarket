@@ -187,13 +187,18 @@ const filteredBets = computed(() => {
 })
 
 const sortedBets = computed(() => {
+  const statusFilters = filters.value.filter((f) => STATUS_VALUES.includes(f))
+  const showingPast =
+    statusFilters.length > 0 && statusFilters.every((f) => f !== 'open')
+
   return [...filteredBets.value].sort((a, b) => {
     const aOpen = effectiveStatus(a) === 'open' ? 0 : 1
     const bOpen = effectiveStatus(b) === 'open' ? 0 : 1
     if (aOpen !== bOpen) return aOpen - bOpen
 
+    const dir = showingPast ? -1 : 1
     return (
-      a.closesAt.toMillis() - b.closesAt.toMillis() ||
+      dir * (a.closesAt.toMillis() - b.closesAt.toMillis()) ||
       b.createdAt.toMillis() - a.createdAt.toMillis()
     )
   })
